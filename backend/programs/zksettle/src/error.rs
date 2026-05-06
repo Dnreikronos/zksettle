@@ -79,6 +79,16 @@ pub enum ZkSettleError {
     BubblegumLeafOwnerMismatch,
     #[msg("Mint's TransferHook extension does not point to this program")]
     MintHookMismatch,
+    #[msg("Chunk write exceeds expected_proof_len")]
+    ChunkOutOfBounds,
+    #[msg("Chunk offset does not match high_water_mark (sequential writes required)")]
+    ChunkNotSequential,
+    #[msg("Cannot write to a finalized payload")]
+    PayloadAlreadyFinalized,
+    #[msg("Payload must be finalized before settlement")]
+    PayloadNotReady,
+    #[msg("Proof length does not match expected_proof_len at finalize")]
+    ProofIncomplete,
 }
 
 /// Map an external Result's Err into a `ZkSettleError`, logging the source via
@@ -156,6 +166,11 @@ mod tests {
             ZkSettleError::BubblegumTailInvalid as u32,
             ZkSettleError::BubblegumLeafOwnerMismatch as u32,
             ZkSettleError::MintHookMismatch as u32,
+            ZkSettleError::ChunkOutOfBounds as u32,
+            ZkSettleError::ChunkNotSequential as u32,
+            ZkSettleError::PayloadAlreadyFinalized as u32,
+            ZkSettleError::PayloadNotReady as u32,
+            ZkSettleError::ProofIncomplete as u32,
         ];
         let mut seen = std::collections::HashSet::new();
         for code in &codes {

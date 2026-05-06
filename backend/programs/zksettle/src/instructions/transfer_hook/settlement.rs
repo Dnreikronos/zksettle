@@ -68,6 +68,8 @@ pub(crate) fn validate_settlement_guards(
 }
 
 fn run_settlement(sctx: SettlementContext<'_, '_>) -> Result<()> {
+    require!(sctx.payload.finalized, ZkSettleError::PayloadNotReady);
+
     let clock = Clock::get()?;
     validate_settlement_guards(
         &sctx.payload.mint,

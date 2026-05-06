@@ -11,24 +11,20 @@ use crate::error::ZkSettleError;
 use crate::instructions::bubblegum_mint::{tree_config_pda, MPL_BUBBLEGUM_ID, NOOP_PROGRAM_ID};
 use crate::state::{BubblegumTreeRegistry, Issuer, BUBBLEGUM_REGISTRY_SEED, BUBBLEGUM_TREE_CREATOR_SEED, ISSUER_SEED};
 
-pub use handlers::{close_hook_payload_handler, init_extra_account_meta_list_handler, set_hook_payload_handler};
+pub use handlers::{
+    close_hook_payload_handler, finalize_hook_payload_handler, init_extra_account_meta_list_handler,
+    init_hook_payload_handler, set_hook_payload_handler, write_hook_proof_handler,
+};
 pub use settlement::{execute_hook_handler, settle_hook_handler};
 pub use types::{
     ExtraAccountMetaInput, HookPayload, StagedLightArgs, EXTRA_ACCOUNT_META_LIST_SEED,
     HOOK_PAYLOAD_SEED, MAX_HOOK_PROOF_BYTES,
 };
 
+/// Shared by `set_hook_payload` (single-tx) and `init_hook_payload` (chunked
+/// init). Both create the payload PDA with `init`.
 #[derive(Accounts)]
-#[instruction(
-    proof_and_witness: Vec<u8>,
-    nullifier_hash: [u8; 32],
-    mint: Pubkey,
-    epoch: u64,
-    recipient: Pubkey,
-    amount: u64,
-    light_args: StagedLightArgs,
-)]
-pub struct SetHookPayload<'info> {
+pub struct InitHookPayload<'info> {
     #[account(mut)]
     pub authority: Signer<'info>,
 
@@ -55,6 +51,28 @@ pub struct SetHookPayload<'info> {
     pub hook_payload: Account<'info, HookPayload>,
 
     pub system_program: Program<'info, System>,
+}
+
+/// Shared by `write_hook_proof` and `finalize_hook_payload`. Both mutate an
+/// existing, non-finalized payload with issuer authorization.
+#[derive(Accounts)]
+pub struct ModifyHookPayload<'info> {
+    pub authority: Signer<'info>,
+
+    #[account(
+        seeds = [ISSUER_SEED, authority.key().as_ref()],
+        bump = issuer.bump,
+        has_one = authority @ ZkSettleError::UnauthorizedIssuer,
+    )]
+    pub issuer: Account<'info, Issuer>,
+
+    #[account(
+        mut,
+        seeds = [HOOK_PAYLOAD_SEED, authority.key().as_ref()],
+        bump = hook_payload.bump,
+        constraint = !hook_payload.finalized @ ZkSettleError::PayloadAlreadyFinalized,
+    )]
+    pub hook_payload: Account<'info, HookPayload>,
 }
 
 #[derive(Accounts)]
