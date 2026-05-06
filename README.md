@@ -122,7 +122,7 @@ sequenceDiagram
 |---|---|---|
 | **ZK Compliance Circuit** | Proves Merkle membership, sanctions exclusion, jurisdiction check, expiry, and nullifier — all in one Groth16 proof | `circuits/` (Noir) |
 
-> ℹ️ The circuit implements all five compliance checks (Merkle membership, sanctions exclusion, jurisdiction, credential expiry, nullifier) with 11 public inputs. The verifier key in `backend/programs/zksettle/src/generated_vk.rs` is regenerated from `default.vk` by `build.rs`; any circuit change requires refreshing the VK before on-chain proofs will verify. The deployed VK currently binds 8 public inputs (indices 0–7); indices 8–10 (sanctions_root, jurisdiction_root, timestamp) await VK regeneration.
+> ℹ️ The circuit implements all five compliance checks (Merkle membership, sanctions exclusion, jurisdiction, credential expiry, nullifier) with 11 public inputs. The verifier key in `backend/programs/zksettle/src/generated_vk.rs` is regenerated from `default.vk` by `build.rs`; any circuit change requires refreshing the VK before on-chain proofs will verify. The deployed VK binds all 11 public inputs (indices 0–10).
 >
 > ⚠️ The `placeholder-vk` feature flag is **dev/test only**. It substitutes the production verifier key with a placeholder for local iteration. A `compile_error!` prevents it from compiling in release mode, and CI enforces this gate. Never enable `placeholder-vk` for deployments.
 | **Anchor program** | On-chain verifier. Exposes `init_attestation_tree()`, `register_issuer()`, `update_issuer_root()`, `verify_proof()`, `check_attestation()`, plus the hook flow: `init_extra_account_meta_list()`, `set_hook_payload()`, `settle_hook()`, `transfer_hook()` | `backend/programs/zksettle/` (Rust) |
@@ -135,7 +135,7 @@ sequenceDiagram
 | **Shared types** | Account layouts, policy schemas, attestation format | `backend/crates/zksettle-types/` (Rust) |
 | **Crypto primitives** | Poseidon hashing, Merkle tree, SMT operations | `backend/crates/zksettle-crypto/` (Rust) |
 | **TypeScript SDK** | `prove()`, `wrap()`, `audit()` for fintech integration | `sdk/` (TypeScript) |
-| **Dashboard** | Live proof feed, attestation explorer, audit export | `frontend/` (Vite + React) |
+| **Dashboard** | Live proof feed, attestation explorer, audit export | `frontend/` (Next.js + React) |
 
 ---
 
@@ -212,7 +212,7 @@ zksettle/
 ├── sdk/                          # TypeScript SDK (@zksettle/sdk)
 │   ├── src/
 │   └── package.json
-├── frontend/                     # Vite + React dashboard
+├── frontend/                     # Next.js + React dashboard
 │   ├── src/
 │   └── package.json
 ├── tests/                        # End-to-end tests (Playwright)
@@ -221,7 +221,6 @@ zksettle/
 ├── zksettle_prd.md               # Product Requirements Document
 ├── zksettle_adr.md               # Architecture Decision Records
 ├── zksettle_pitch.md             # Hackathon pitch document
-├── IMPLEMENTATION_STATUS.md      # Ground truth: code vs docs reconciliation
 └── README.md
 ```
 
