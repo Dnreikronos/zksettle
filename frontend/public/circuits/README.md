@@ -53,11 +53,9 @@ the browser prover. See `circuits/src/main.nr` for the source of truth.
 
 ## Notes
 
-- The on-chain verifying key (`backend/programs/zksettle/default.vk`) currently
-  binds only indices 0–7 — see `IMPLEMENTATION_STATUS.md` §2.1. Proofs generated
-  here will succeed in the browser, but the on-chain `verify_proof` instruction
-  will not yet enforce indices 8–10 until the VK is regenerated through the
-  Sunspot pipeline.
+- The on-chain verifying key (`backend/programs/zksettle/default.vk`) binds all
+  11 public inputs (indices 0–10). The `verify_proof` instruction enforces every
+  binding via `check_bindings` before running the Groth16 pairing check.
 - `compile-circuit.sh` strips `debug_symbols` and `file_map` from the published
   artifact before copying it here. This keeps the payload small (~21 KB instead
   of ~76 KB) and avoids leaking the developer's absolute source path through

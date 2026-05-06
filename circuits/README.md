@@ -1,25 +1,46 @@
-# zksettle thin-slice circuit
+# zksettle compliance circuit
 
-Noir 1.0.0-beta.18 circuit proving:
+Noir 1.0.0-beta.18 circuit that enforces five compliance checks in a single
+Groth16 proof:
 
 1. **Merkle membership** of a `wallet` leaf under a public `merkle_root`
    (depth 20, Poseidon2 hash).
-2. **Nullifier derivation**: `nullifier == Poseidon2(private_key, context_hash)`.
+2. **Nullifier derivation**: binds the prover's private key to the transfer
+   context — `nullifier == Poseidon2(private_key, mint_lo, mint_hi, epoch,
+   recipient_lo, recipient_hi, amount)`.
+3. **Sanctions exclusion**: proves the wallet does not appear in the sanctions
+   Sparse Merkle Tree. Path indices are derived from the wallet leaf to
+   prevent opening arbitrary zero-leaves.
+4. **Jurisdiction validation**: proves the jurisdiction leaf exists in an
+   allowed-jurisdictions Merkle tree.
+5. **Credential expiry**: asserts `timestamp <= credential_expiry`.
 
 ## Public-input layout
 
-| slot | value         |
-|------|---------------|
-| 0    | `merkle_root` |
-| 1    | `nullifier`   |
+| slot | field               |
+|------|---------------------|
+| 0    | `merkle_root`       |
+| 1    | `nullifier`         |
+| 2    | `mint_lo`           |
+| 3    | `mint_hi`           |
+| 4    | `epoch`             |
+| 5    | `recipient_lo`      |
+| 6    | `recipient_hi`      |
+| 7    | `amount`            |
+| 8    | `sanctions_root`    |
+| 9    | `jurisdiction_root` |
+| 10   | `timestamp`         |
 
-Order is load-bearing. It must stay in sync with
-`backend/programs/zksettle/src/state/pubinputs.rs` and the on-chain
-`check_bindings` call in `instructions/verify_proof.rs`.
+Order is load-bearing. It must stay in sync with the `*_IDX` constants in
+`backend/crates/zksettle-types/src/lib.rs` and the on-chain `check_bindings`
+call in `backend/programs/zksettle/src/instructions/verify_proof/bindings.rs`.
 
 ## Private inputs
 
-`wallet`, `path[20]`, `path_indices[20]` (u1), `private_key`, `context_hash`.
+`wallet`, `path[20]`, `path_indices[20]` (u1), `private_key`,
+`sanctions_path[20]`, `sanctions_path_indices[20]` (u1),
+`sanctions_leaf_value`, `jurisdiction`, `jurisdiction_path[20]`,
+`jurisdiction_path_indices[20]` (u1), `credential_expiry`.
 
 ## Why a hand-rolled sponge?
 
@@ -46,8 +67,7 @@ rm -rf target
 
 # 1. Produce canonical public-input values for the default Prover.toml.
 ( cd ../scripts/fixture-noir && nargo execute )
-# copy the two hex values from the `Circuit output: [..]` line into
-# `merkle_root` / `nullifier` below.
+# Copy the hex values from the `Circuit output: [..]` line into Prover.toml.
 
 # 2. Compile the circuit to ACIR JSON, then to gnark constraint system.
 nargo compile
@@ -64,9 +84,9 @@ sunspot prove target/zksettle_slice.json target/zksettle_slice.gz \
 ## Trusted setup
 
 `sunspot setup` currently invokes `groth16.Setup` from gnark, which
-generates a non-ceremonial SRS in-memory — safe for development and the
-thin-slice tests but **not** for production. A real MPC ceremony (e.g.
-Hermez `powersOfTau28_hez_final_14.ptau`) is out of scope for this slice;
+generates a non-ceremonial SRS in-memory — safe for development but **not**
+for production. A real MPC ceremony (e.g. Hermez
+`powersOfTau28_hez_final_14.ptau`) is required before mainnet deployment;
 wiring it through sunspot is future work.
 
 ## CI determinism
@@ -80,7 +100,7 @@ unexpected drift is a review signal.
 
 The ignored tests in `backend/programs/zksettle/tests/` assume the
 `target/zksettle_slice.{json,ccs,pk}` artifacts above exist. After the
-steps in “Regenerating the committed VK”, the tests shell out to `nargo
+steps in "Regenerating the committed VK", the tests shell out to `nargo
 execute` + `sunspot prove` themselves. Run with:
 
 ```bash
