@@ -120,6 +120,42 @@ pub mod zksettle {
         )
     }
 
+    pub fn init_hook_payload(
+        ctx: Context<InitHookPayload>,
+        expected_proof_len: u32,
+    ) -> Result<()> {
+        instructions::transfer_hook::init_hook_payload_handler(ctx, expected_proof_len)
+    }
+
+    pub fn write_hook_proof(
+        ctx: Context<WriteHookProof>,
+        offset: u32,
+        chunk: Vec<u8>,
+    ) -> Result<()> {
+        instructions::transfer_hook::write_hook_proof_handler(ctx, offset, chunk)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn finalize_hook_payload(
+        ctx: Context<FinalizeHookPayload>,
+        nullifier_hash: [u8; 32],
+        mint: Pubkey,
+        epoch: u64,
+        recipient: Pubkey,
+        amount: u64,
+        light_args: instructions::transfer_hook::StagedLightArgs,
+    ) -> Result<()> {
+        instructions::transfer_hook::finalize_hook_payload_handler(
+            ctx,
+            nullifier_hash,
+            mint,
+            epoch,
+            recipient,
+            amount,
+            light_args,
+        )
+    }
+
     pub fn init_extra_account_meta_list(
         ctx: Context<InitExtraAccountMetaList>,
         extras: Vec<instructions::transfer_hook::ExtraAccountMetaInput>,

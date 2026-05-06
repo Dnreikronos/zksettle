@@ -10,7 +10,8 @@ use crate::error::ZkSettleError;
 
 use super::{
     types::{ExtraAccountMetaInput, StagedLightArgs, EXTRA_ACCOUNT_META_LIST_SEED, MAX_HOOK_PROOF_BYTES},
-    CloseHookPayload, InitExtraAccountMetaList, SetHookPayload,
+    CloseHookPayload, FinalizeHookPayload, InitExtraAccountMetaList, InitHookPayload,
+    SetHookPayload, WriteHookProof,
 };
 
 /// Pure guard for `set_hook_payload`. Extracted so unit tests can cover the
@@ -50,8 +51,90 @@ pub fn set_hook_payload_handler(
     payload.amount = amount;
     payload.epoch = epoch;
     payload.light_args = light_args;
+    payload.expected_proof_len = proof_and_witness.len() as u32;
+    payload.high_water_mark = proof_and_witness.len() as u32;
+    payload.finalized = true;
     payload.proof_and_witness = proof_and_witness;
     payload.bump = ctx.bumps.hook_payload;
+    Ok(())
+}
+
+pub fn init_hook_payload_handler(
+    ctx: Context<InitHookPayload>,
+    expected_proof_len: u32,
+) -> Result<()> {
+    let len = expected_proof_len as usize;
+    require!(
+        len > 0 && len <= MAX_HOOK_PROOF_BYTES,
+        ZkSettleError::HookPayloadInvalid
+    );
+
+    let payload = &mut ctx.accounts.hook_payload;
+    payload.issuer = ctx.accounts.issuer.key();
+    payload.expected_proof_len = expected_proof_len;
+    payload.high_water_mark = 0;
+    payload.finalized = false;
+    payload.proof_and_witness = vec![0u8; len];
+    payload.bump = ctx.bumps.hook_payload;
+    Ok(())
+}
+
+pub fn write_hook_proof_handler(
+    ctx: Context<WriteHookProof>,
+    offset: u32,
+    chunk: Vec<u8>,
+) -> Result<()> {
+    let payload = &mut ctx.accounts.hook_payload;
+    let end = (offset as usize)
+        .checked_add(chunk.len())
+        .ok_or_else(|| error!(ZkSettleError::ChunkOutOfBounds))?;
+    require!(
+        end <= payload.expected_proof_len as usize,
+        ZkSettleError::ChunkOutOfBounds
+    );
+
+    payload.proof_and_witness[offset as usize..end].copy_from_slice(&chunk);
+    let end_u32 = end as u32;
+    if end_u32 > payload.high_water_mark {
+        payload.high_water_mark = end_u32;
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_finalize_inputs(
+    nullifier_hash: &[u8; 32],
+    amount: u64,
+) -> Result<()> {
+    require!(*nullifier_hash != [0u8; 32], ZkSettleError::ZeroNullifier);
+    require!(amount > 0, ZkSettleError::InvalidTransferAmount);
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn finalize_hook_payload_handler(
+    ctx: Context<FinalizeHookPayload>,
+    nullifier_hash: [u8; 32],
+    mint: Pubkey,
+    epoch: u64,
+    recipient: Pubkey,
+    amount: u64,
+    light_args: StagedLightArgs,
+) -> Result<()> {
+    validate_finalize_inputs(&nullifier_hash, amount)?;
+
+    let payload = &mut ctx.accounts.hook_payload;
+    require!(
+        payload.high_water_mark == payload.expected_proof_len,
+        ZkSettleError::ProofIncomplete
+    );
+
+    payload.nullifier_hash = nullifier_hash;
+    payload.mint = mint;
+    payload.recipient = recipient;
+    payload.amount = amount;
+    payload.epoch = epoch;
+    payload.light_args = light_args;
+    payload.finalized = true;
     Ok(())
 }
 
