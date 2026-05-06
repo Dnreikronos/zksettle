@@ -99,7 +99,7 @@ pub mod zksettle {
 
     #[allow(clippy::too_many_arguments)]
     pub fn set_hook_payload(
-        ctx: Context<SetHookPayload>,
+        ctx: Context<InitHookPayload>,
         proof_and_witness: Vec<u8>,
         nullifier_hash: [u8; 32],
         mint: Pubkey,
@@ -128,7 +128,7 @@ pub mod zksettle {
     }
 
     pub fn write_hook_proof(
-        ctx: Context<WriteHookProof>,
+        ctx: Context<ModifyHookPayload>,
         offset: u32,
         chunk: Vec<u8>,
     ) -> Result<()> {
@@ -137,7 +137,7 @@ pub mod zksettle {
 
     #[allow(clippy::too_many_arguments)]
     pub fn finalize_hook_payload(
-        ctx: Context<FinalizeHookPayload>,
+        ctx: Context<ModifyHookPayload>,
         nullifier_hash: [u8; 32],
         mint: Pubkey,
         epoch: u64,

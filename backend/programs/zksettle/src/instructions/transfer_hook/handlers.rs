@@ -10,8 +10,7 @@ use crate::error::ZkSettleError;
 
 use super::{
     types::{ExtraAccountMetaInput, StagedLightArgs, EXTRA_ACCOUNT_META_LIST_SEED, MAX_HOOK_PROOF_BYTES},
-    CloseHookPayload, FinalizeHookPayload, InitExtraAccountMetaList, InitHookPayload,
-    SetHookPayload, WriteHookProof,
+    CloseHookPayload, InitExtraAccountMetaList, InitHookPayload, ModifyHookPayload,
 };
 
 /// Pure guard for `set_hook_payload`. Extracted so unit tests can cover the
@@ -32,7 +31,7 @@ pub(crate) fn validate_set_hook_inputs(
 
 #[allow(clippy::too_many_arguments)]
 pub fn set_hook_payload_handler(
-    ctx: Context<SetHookPayload>,
+    ctx: Context<InitHookPayload>,
     proof_and_witness: Vec<u8>,
     nullifier_hash: [u8; 32],
     mint: Pubkey,
@@ -80,7 +79,7 @@ pub fn init_hook_payload_handler(
 }
 
 pub fn write_hook_proof_handler(
-    ctx: Context<WriteHookProof>,
+    ctx: Context<ModifyHookPayload>,
     offset: u32,
     chunk: Vec<u8>,
 ) -> Result<()> {
@@ -112,7 +111,7 @@ pub(crate) fn validate_finalize_inputs(
 
 #[allow(clippy::too_many_arguments)]
 pub fn finalize_hook_payload_handler(
-    ctx: Context<FinalizeHookPayload>,
+    ctx: Context<ModifyHookPayload>,
     nullifier_hash: [u8; 32],
     mint: Pubkey,
     epoch: u64,
