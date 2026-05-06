@@ -57,7 +57,7 @@ export function ProveProgressBar({ steps, currentStep }: ProveProgressBarProps) 
         <div className="h-1 flex-1 overflow-hidden rounded-full bg-border-subtle">
           <div
             className="h-full rounded-full bg-forest transition-all duration-300"
-            style={{ width: `${(completedCount / steps.length) * 100}%` }}
+            style={{ width: `${steps.length > 0 ? (completedCount / steps.length) * 100 : 0}%` }}
           />
         </div>
         <span className="shrink-0 font-mono text-[11px] text-muted">

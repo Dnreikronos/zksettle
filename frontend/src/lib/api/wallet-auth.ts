@@ -13,6 +13,7 @@ interface CachedSignature {
 
 let cached: CachedSignature | null = null;
 let inflight: Promise<Record<string, string>> | null = null;
+let inflightWallet: string | null = null;
 
 export type SignMessageFn = (message: Uint8Array) => Promise<Uint8Array>;
 
@@ -111,12 +112,13 @@ export async function getWalletAuthHeaders(): Promise<Record<string, string>> {
     };
   }
 
-  // Deduplicate concurrent sign requests — only one Phantom popup
-  if (inflight) return inflight;
+  if (inflight && inflightWallet === walletHex) return inflight;
 
   inflight = signAndCache(publicKey, signMessage).finally(() => {
     inflight = null;
+    inflightWallet = null;
   });
+  inflightWallet = walletHex;
 
   return inflight;
 }

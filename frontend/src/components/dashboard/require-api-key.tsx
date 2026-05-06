@@ -26,7 +26,7 @@ export function RequireApiKey({ children }: Readonly<{ children: ReactNode }>) {
 }
 
 function ApiKeyGate({ onSelected }: { onSelected: () => void }) {
-  const { data, isLoading } = useApiKeys();
+  const { data, isLoading, isError, refetch } = useApiKeys();
   const createKey = useCreateApiKey();
   const [owner, setOwner] = useState("");
 
@@ -123,7 +123,18 @@ function ApiKeyGate({ onSelected }: { onSelected: () => void }) {
           </div>
         )}
 
-        {!isLoading && keys.length === 0 && (
+        {!isLoading && isError && (
+          <div className="mt-4 flex flex-col gap-3">
+            <p className="text-xs text-red-600">
+              Failed to load API keys. Check your connection and try again.
+            </p>
+            <Button size="sm" variant="ghost" onClick={() => refetch()}>
+              Retry
+            </Button>
+          </div>
+        )}
+
+        {!isLoading && !isError && keys.length === 0 && (
           <div className="mt-4 flex flex-col gap-3">
             <label className="text-xs font-medium text-stone">
               No API keys found. Create one to get started.

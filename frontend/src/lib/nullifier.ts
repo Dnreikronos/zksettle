@@ -29,12 +29,18 @@ export async function computeNullifier(
   );
 }
 
+const BN254_MAX = (1n << 254n) - 1n;
+
 function fieldToBytes32(value: string): Uint8Array {
-  let n: bigint = value.startsWith("0x") ? BigInt(value) : BigInt(value);
+  const n = BigInt(value);
+  if (n < 0n || n > BN254_MAX) {
+    throw new RangeError(`Field value out of BN254 range: ${value}`);
+  }
   const buf = new Uint8Array(32);
+  let rem = n;
   for (let i = 31; i >= 0; i--) {
-    buf[i] = Number(n & 0xffn);
-    n >>= 8n;
+    buf[i] = Number(rem & 0xffn);
+    rem >>= 8n;
   }
   return buf;
 }

@@ -131,6 +131,15 @@ export function useProveFlow(): UseProveFlowReturn {
           });
           return;
         }
+        const expiresAt = credential.issued_at + CREDENTIAL_VALIDITY_SECS;
+        if (Math.floor(Date.now() / 1000) >= expiresAt) {
+          dispatch({
+            type: "STEP_ERROR",
+            step: 1,
+            error: "Credential has expired. Re-issue from the Wallets & Credentials page.",
+          });
+          return;
+        }
         dispatch({
           type: "STEP_SUCCESS",
           step: 1,
@@ -328,18 +337,27 @@ export function useProveFlow(): UseProveFlowReturn {
 
       // Step 5: Confirm result
       dispatch({ type: "STEP_RUNNING", step: 5 });
+      const txSig = state.txSignature;
       try {
         const start = performance.now();
-        if (state.txSignature) {
-          await connection.confirmTransaction(state.txSignature, "confirmed");
+        if (txSig) {
+          await connection.confirmTransaction(txSig, "confirmed");
         }
         dispatch({
           type: "STEP_SUCCESS",
           step: 5,
           durationMs: performance.now() - start,
         });
-      } catch {
-        dispatch({ type: "STEP_SUCCESS", step: 5 });
+      } catch (err) {
+        if (txSig) {
+          dispatch({
+            type: "STEP_ERROR",
+            step: 5,
+            error: err instanceof Error ? err.message : "Confirmation failed",
+          });
+        } else {
+          dispatch({ type: "STEP_SUCCESS", step: 5 });
+        }
       }
     },
     [

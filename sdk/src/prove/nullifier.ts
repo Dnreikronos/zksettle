@@ -23,8 +23,13 @@ export async function computeNullifier(
   return "0x" + Array.from(hash).map(b => b.toString(16).padStart(2, "0")).join("");
 }
 
+const BN254_MAX = (1n << 254n) - 1n;
+
 function fieldToBytes32(value: string): Uint8Array {
-  const n: bigint = BigInt(value);
+  const n = BigInt(value);
+  if (n < 0n || n > BN254_MAX) {
+    throw new RangeError(`Field value out of BN254 range: ${value}`);
+  }
   const buf = new Uint8Array(32);
   let rem = n;
   for (let i = 31; i >= 0; i--) {
