@@ -17,8 +17,29 @@ impl HttpOfacFetcher {
     }
 }
 
+fn parse_wallets_from_csv(body: &str) -> Result<Vec<String>, UpdaterError> {
+    let mut wallets = Vec::new();
+    let mut rdr = csv::ReaderBuilder::new()
+        .has_headers(false)
+        .flexible(true)
+        .from_reader(body.as_bytes());
+
+    for result in rdr.records() {
+        let record = result.map_err(|e| UpdaterError::Parse(e.to_string()))?;
+        for field in record.iter() {
+            let trimmed = field.trim();
+            if trimmed.starts_with("0x") && trimmed.len() == 66 {
+                wallets.push(trimmed.to_string());
+            }
+        }
+    }
+
+    Ok(wallets)
+}
+
 #[async_trait]
 impl OfacFetcher for HttpOfacFetcher {
+    #[mutants::skip]
     async fn fetch_wallets(&self) -> Result<Vec<String>, UpdaterError> {
         let body = reqwest::get(&self.url)
             .await
@@ -27,22 +48,7 @@ impl OfacFetcher for HttpOfacFetcher {
             .await
             .map_err(|e| UpdaterError::Fetch(e.to_string()))?;
 
-        let mut wallets = Vec::new();
-        let mut rdr = csv::ReaderBuilder::new()
-            .has_headers(false)
-            .flexible(true)
-            .from_reader(body.as_bytes());
-
-        for result in rdr.records() {
-            let record = result.map_err(|e| UpdaterError::Parse(e.to_string()))?;
-            for field in record.iter() {
-                let trimmed = field.trim();
-                if trimmed.starts_with("0x") && trimmed.len() == 66 {
-                    wallets.push(trimmed.to_string());
-                }
-            }
-        }
-
+        let wallets = parse_wallets_from_csv(&body)?;
         tracing::info!(count = wallets.len(), "fetched OFAC wallet addresses");
         Ok(wallets)
     }
