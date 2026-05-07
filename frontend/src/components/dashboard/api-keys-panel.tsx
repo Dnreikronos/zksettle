@@ -1,7 +1,7 @@
 "use client";
 
 import { Copy, Trash, WarningTriangle } from "iconoir-react";
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type SyntheticEvent } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -56,7 +56,7 @@ function describeError(err: unknown): string {
 }
 
 function displayPrefix(keyHash: string): string {
-  const cached = typeof window === "undefined" ? null : lookupKeyPrefix(keyHash);
+  const cached = globalThis.window === undefined ? null : lookupKeyPrefix(keyHash);
   if (cached) return cached;
   return `hash ${keyHash.slice(0, 8)}…${keyHash.slice(-4)}`;
 }
@@ -87,10 +87,7 @@ export function ApiKeysPanel() {
     };
   }, []);
 
-  const submit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const trimmed = owner.trim();
-    if (!trimmed || createKey.isPending) return;
+  const runCreate = async (trimmed: string): Promise<void> => {
     try {
       const created = await createKey.mutateAsync(trimmed);
       setRevealed(created);
@@ -99,6 +96,13 @@ export function ApiKeysPanel() {
     } catch {
       // surfaced via createKey.error
     }
+  };
+
+  const submit = (event: SyntheticEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const trimmed = owner.trim();
+    if (!trimmed || createKey.isPending) return;
+    void runCreate(trimmed);
   };
 
   const dismissReveal = async () => {
@@ -339,7 +343,7 @@ interface RevealKeyDialogProps {
   onDismiss: () => void;
 }
 
-function RevealKeyDialog({ created, copied, onCopy, onDismiss }: RevealKeyDialogProps) {
+function RevealKeyDialog({ created, copied, onCopy, onDismiss }: Readonly<RevealKeyDialogProps>) {
   const ref = useRef<HTMLDialogElement>(null);
 
   useEffect(() => {
@@ -380,7 +384,8 @@ function RevealKeyDialog({ created, copied, onCopy, onDismiss }: RevealKeyDialog
             </h2>
             <p className="text-sm text-stone">
               We won&apos;t show it again. Store it in your secret manager before closing
-              this dialog. The key is also set as your active key (HttpOnly cookie).
+              this dialog. After you close this dialog, it will be set as your
+              active key (stored as an HttpOnly cookie, never visible to JS).
             </p>
           </div>
         </div>
@@ -416,7 +421,7 @@ interface RevokeConfirmDialogProps {
   onConfirm: () => void;
 }
 
-function RevokeConfirmDialog({ target, onCancel, onConfirm }: RevokeConfirmDialogProps) {
+function RevokeConfirmDialog({ target, onCancel, onConfirm }: Readonly<RevokeConfirmDialogProps>) {
   const ref = useRef<HTMLDialogElement>(null);
 
   useEffect(() => {

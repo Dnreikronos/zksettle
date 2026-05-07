@@ -29,20 +29,24 @@ export async function setActiveApiKey(key: string): Promise<void> {
 }
 
 export async function clearActiveApiKey(): Promise<void> {
-  await fetch("/api/active-key", {
+  const res = await fetch("/api/active-key", {
     method: "DELETE",
     credentials: "same-origin",
   });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error ?? `failed_to_clear_active_key_${res.status}`);
+  }
   notifyActiveKeyChanged();
 }
 
 function notifyActiveKeyChanged(): void {
-  if (typeof window === "undefined") return;
+  if (globalThis.window === undefined) return;
   globalThis.dispatchEvent(new CustomEvent(ACTIVE_KEY_CHANGED_EVENT));
 }
 
 export function onActiveKeyChanged(handler: () => void): () => void {
-  if (typeof window === "undefined") return () => {};
+  if (globalThis.window === undefined) return () => {};
   globalThis.addEventListener(ACTIVE_KEY_CHANGED_EVENT, handler);
   return () => globalThis.removeEventListener(ACTIVE_KEY_CHANGED_EVENT, handler);
 }
