@@ -3,7 +3,6 @@ import type { PublicKey } from "@solana/web3.js";
 import { z } from "zod";
 
 import { apiFetch } from "@/lib/api/client";
-import { API_BASE_URL } from "@/lib/config";
 import { TenantSchema, type Tenant } from "@/lib/api/schemas";
 
 const ChallengeSchema = z.object({ nonce: z.string().min(1) });
@@ -57,13 +56,7 @@ export async function signIn(
 }
 
 export async function signOut(): Promise<void> {
-  const res = await fetch(`${API_BASE_URL}/auth/logout`, {
-    method: "POST",
-    credentials: "include",
-  });
-  if (!res.ok) {
-    throw new Error(`Logout failed: ${res.status}`);
-  }
+  await apiFetch("/auth/logout", { method: "POST" });
 }
 
 export async function getMe(): Promise<Tenant> {

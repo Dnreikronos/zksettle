@@ -11,6 +11,8 @@ const GATEWAY_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ??
   "http://localhost:4000";
 
+// Headers we never forward in either direction. Cookie/Set-Cookie are
+// rewritten below to strip our own active-key cookie.
 const HOP_BY_HOP = new Set([
   "connection",
   "keep-alive",
@@ -21,12 +23,20 @@ const HOP_BY_HOP = new Set([
   "transfer-encoding",
   "upgrade",
   "host",
-  "cookie",
   "content-length",
 ]);
 
 interface RouteContext {
   params: Promise<{ path: string[] }>;
+}
+
+function stripActiveKeyCookie(cookieHeader: string | null): string | null {
+  if (!cookieHeader) return null;
+  const kept = cookieHeader
+    .split(/;\s*/)
+    .filter((pair) => !pair.startsWith(`${ACTIVE_KEY_COOKIE}=`))
+    .join("; ");
+  return kept.length > 0 ? kept : null;
 }
 
 async function forward(request: Request, context: RouteContext): Promise<Response> {
@@ -37,11 +47,17 @@ async function forward(request: Request, context: RouteContext): Promise<Respons
 
   const headers = new Headers();
   request.headers.forEach((value, key) => {
-    if (!HOP_BY_HOP.has(key.toLowerCase())) {
-      headers.set(key, value);
-    }
+    const lower = key.toLowerCase();
+    if (HOP_BY_HOP.has(lower)) return;
+    if (lower === "cookie") return; // handled below
+    headers.set(key, value);
   });
 
+  // Forward all cookies EXCEPT our active-key cookie (server-only secret).
+  const forwardedCookies = stripActiveKeyCookie(request.headers.get("cookie"));
+  if (forwardedCookies) headers.set("cookie", forwardedCookies);
+
+  // Inject the bearer token from the active-key cookie.
   const cookieStore = await cookies();
   const apiKey = cookieStore.get(ACTIVE_KEY_COOKIE)?.value;
   if (apiKey && !headers.has("authorization")) {
@@ -72,9 +88,13 @@ async function forward(request: Request, context: RouteContext): Promise<Respons
 
   const responseHeaders = new Headers();
   upstream.headers.forEach((value, key) => {
-    if (!HOP_BY_HOP.has(key.toLowerCase()) && key.toLowerCase() !== "set-cookie") {
-      responseHeaders.set(key, value);
+    if (HOP_BY_HOP.has(key.toLowerCase())) return;
+    // Set-Cookie can repeat — Headers#set would collapse it. Use append.
+    if (key.toLowerCase() === "set-cookie") {
+      responseHeaders.append("set-cookie", value);
+      return;
     }
+    responseHeaders.set(key, value);
   });
 
   return new Response(upstream.body, {
