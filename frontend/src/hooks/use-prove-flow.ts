@@ -56,6 +56,7 @@ export function useProveFlow(): UseProveFlowReturn {
 
   const runFlow = useCallback(
     async (mode: "live" | "demo") => {
+      let txSignature: string | undefined;
       dispatch({ type: "START_FLOW", mode });
 
       // Step 0: Connect
@@ -312,6 +313,7 @@ export function useProveFlow(): UseProveFlowReturn {
           });
 
           const signature = await sendTransaction(tx, connection);
+          txSignature = signature;
           dispatch({ type: "SET_TX", signature });
           dispatch({
             type: "STEP_SUCCESS",
@@ -337,11 +339,10 @@ export function useProveFlow(): UseProveFlowReturn {
 
       // Step 5: Confirm result
       dispatch({ type: "STEP_RUNNING", step: 5 });
-      const txSig = state.txSignature;
       try {
         const start = performance.now();
-        if (txSig) {
-          await connection.confirmTransaction(txSig, "confirmed");
+        if (txSignature) {
+          await connection.confirmTransaction(txSignature, "confirmed");
         }
         dispatch({
           type: "STEP_SUCCESS",
@@ -349,7 +350,7 @@ export function useProveFlow(): UseProveFlowReturn {
           durationMs: performance.now() - start,
         });
       } catch (err) {
-        if (txSig) {
+        if (txSignature) {
           dispatch({
             type: "STEP_ERROR",
             step: 5,
@@ -369,7 +370,6 @@ export function useProveFlow(): UseProveFlowReturn {
       generate,
       ensureApi,
       derivePrivateKey,
-      state.txSignature,
     ],
   );
 
