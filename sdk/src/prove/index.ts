@@ -1,4 +1,3 @@
-import { Barretenberg } from "@aztec/bb.js";
 import type { InputMap } from "@noir-lang/noir_js";
 import type {
   ProofInputs,
@@ -12,7 +11,7 @@ import { computeNullifier } from "./nullifier.js";
 import { Prover } from "./prover.js";
 
 export { loadCircuit } from "./circuit-loader.js";
-export { computeNullifier } from "./nullifier.js";
+export { computeNullifier, type NullifierInputs } from "./nullifier.js";
 export { Prover } from "./prover.js";
 
 /**
@@ -158,23 +157,15 @@ async function proveHighLevel(
   const epoch = (context.epoch ?? 0).toString();
   const timestamp = Math.floor(Date.now() / 1000).toString();
 
-  // Compute nullifier deterministically: poseidon2_hash([privateKey, mintLo, mintHi, epoch, recipientLo, recipientHi, amount])
-  const hashApi = await Barretenberg.new({ threads: 1 });
-  let nullifier: string;
-  try {
-    nullifier = await computeNullifier(
-      hashApi,
-      context.privateKey,
-      mintLo,
-      mintHi,
-      epoch,
-      recipientLo,
-      recipientHi,
-      context.amount.toString(),
-    );
-  } finally {
-    await hashApi.destroy();
-  }
+  const nullifier = await computeNullifier({
+    privateKey: context.privateKey,
+    mintLo,
+    mintHi,
+    epoch,
+    recipientLo,
+    recipientHi,
+    amount: context.amount.toString(),
+  });
 
   const inputs: ProofInputs = {
     merkleRoot: roots.membership_root,

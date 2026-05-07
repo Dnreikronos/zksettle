@@ -414,7 +414,7 @@ Circuit recebe `mint`, `epoch`, `recipient`, `amount` como public inputs. Hook v
 - Pubkeys são split em dois limbs de 128 bits (`*_lo`, `*_hi`) para caber no scalar field BN254 (~254 bits). `pubkey_to_limbs` garante correspondência byte-a-byte entre circuit witness e ix args.
 - `epoch` e `amount` viajam como `u64` (pad BE em 32 bytes) via `u64_to_field_bytes`.
 - `verify_proof` valida frescor de `epoch`: `EpochInFuture` se `epoch > current_epoch`, `EpochStale` se `current_epoch - epoch > MAX_EPOCH_LAG` (hoje `1` — ontem vale, amanhã não).
-- Sem Transfer Hook, a vinculação é apenas tão forte quanto os args que o chamador passa. Ligação completa (campos preenchidos pelo `TransferHookInstruction`) é seguida em IMPLEMENTATION_STATUS §5.
+- Sem Transfer Hook, a vinculação é apenas tão forte quanto os args que o chamador passa. Com Transfer Hook (`settle_hook` / `transfer_hook`), os campos são rebindados contra a tx corrente via `validate_settlement_guards`.
 
 ---
 
