@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useId, useState, type ReactNode } from "react";
-import { Key } from "iconoir-react";
+import { Copy, Key, WarningTriangle } from "iconoir-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -62,6 +62,8 @@ function ApiKeyGate() {
   const [pasteMode, setPasteMode] = useState(false);
   const [pastedKey, setPastedKey] = useState("");
   const [activateError, setActivateError] = useState<string | null>(null);
+  const [revealedKey, setRevealedKey] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
   const pasteInputId = useId();
   const ownerInputId = useId();
 
@@ -71,11 +73,35 @@ function ApiKeyGate() {
     setActivateError(null);
     try {
       const result = await createKey.mutateAsync(owner || "dashboard");
-      await setActiveApiKey(result.api_key);
+      // Reveal the key first; activation happens on user confirmation so they
+      // have a chance to copy the secret before the gate closes.
+      setRevealedKey(result.api_key);
+      setCopied(false);
+    } catch (err) {
+      setActivateError(err instanceof Error ? err.message : "Failed to create key");
+    }
+  }, [createKey, owner]);
+
+  const handleConfirmReveal = useCallback(async () => {
+    if (!revealedKey) return;
+    setActivateError(null);
+    try {
+      await setActiveApiKey(revealedKey);
     } catch (err) {
       setActivateError(err instanceof Error ? err.message : "Failed to activate key");
     }
-  }, [createKey, owner]);
+  }, [revealedKey]);
+
+  const copyRevealedKey = useCallback(async () => {
+    if (!revealedKey) return;
+    try {
+      await navigator.clipboard.writeText(revealedKey);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setCopied(false);
+    }
+  }, [revealedKey]);
 
   const isPasteValid = KEY_FORMAT.test(pastedKey);
 
@@ -88,6 +114,53 @@ function ApiKeyGate() {
       setActivateError(err instanceof Error ? err.message : "Failed to activate key");
     }
   }, [pastedKey, isPasteValid]);
+
+  if (revealedKey) {
+    return (
+      <div className="flex min-h-[40vh] items-center justify-center px-4">
+        <div className="w-full max-w-lg rounded-[var(--radius-6)] border border-border-subtle bg-surface p-6">
+          <div className="flex items-start gap-3">
+            <WarningTriangle aria-hidden="true" className="mt-1 size-5 shrink-0 text-rust" />
+            <div className="flex flex-col gap-1">
+              <h2 className="font-display text-xl text-ink">Copy this key now</h2>
+              <p className="text-sm text-stone">
+                We won&apos;t show it again. Store it in your secret manager before
+                continuing — you&apos;ll need it for any non-dashboard usage (SDK, curl,
+                CI). The key will also be set as your active key in an HttpOnly cookie.
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-5 flex items-center gap-2 rounded-[var(--radius-3)] border border-border-subtle bg-canvas p-3">
+            <code className="flex-1 break-all font-mono text-sm text-ink">
+              {revealedKey}
+            </code>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={copyRevealedKey}
+              aria-label="Copy API key"
+            >
+              <Copy aria-hidden="true" className="size-4" />
+              {copied ? "Copied" : "Copy"}
+            </Button>
+          </div>
+
+          {activateError && (
+            <p role="alert" className="mt-3 text-xs text-red-600">
+              {activateError}
+            </p>
+          )}
+
+          <div className="mt-6 flex justify-end">
+            <Button variant="primary" size="md" onClick={handleConfirmReveal}>
+              I saved it — continue
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex min-h-[40vh] items-center justify-center px-4">
