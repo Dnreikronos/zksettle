@@ -44,7 +44,7 @@ function ElapsedTimer() {
 
 /* ── Clipboard helper ────────────────────────────────────────────── */
 
-function CopyButton({ text, label }: { text: string; label: string }) {
+function CopyButton({ text, label }: Readonly<{ text: string; label: string }>) {
   const [copied, setCopied] = useState(false);
 
   const onClick = async () => {
@@ -72,34 +72,21 @@ function CopyButton({ text, label }: { text: string; label: string }) {
 
 /* ── Step inline content ─────────────────────────────────────────── */
 
-function StepContent({
-  index,
-  state,
-  startDemo,
-  isRunning,
-  txUrl,
-}: {
-  index: number;
-  state: FlowState;
-  startDemo: () => void;
-  isRunning: boolean;
-  txUrl: string | null;
-}): ReactNode {
-  const step = state.steps[index]!;
+interface StepContentProps {
+  readonly index: number;
+  readonly state: FlowState;
+  readonly startDemo: () => void;
+  readonly isRunning: boolean;
+  readonly txUrl: string | null;
+}
 
-  if (step.status === "running") {
-    return <ElapsedTimer />;
-  }
+function StepRunningContent(): ReactNode {
+  return <ElapsedTimer />;
+}
 
-  if (index === 0 && step.status === "error") {
-    return <ConnectWalletButton size="sm" />;
-  }
-
-  if (
-    index === 1 &&
-    step.status === "error" &&
-    step.error?.includes("No credential")
-  ) {
+function StepErrorContent({ index, step, startDemo, isRunning }: Readonly<{ index: number; step: { error?: string }; startDemo: () => void; isRunning: boolean }>): ReactNode {
+  if (index === 0) return <ConnectWalletButton size="sm" />;
+  if (index === 1 && step.error?.includes("No credential")) {
     return (
       <Button size="sm" variant="ghost" onClick={startDemo} disabled={isRunning}>
         <Sparks className="size-4" strokeWidth={1.5} aria-hidden="true" />
@@ -107,72 +94,54 @@ function StepContent({
       </Button>
     );
   }
+  return null;
+}
 
-  if (index === 1 && step.status === "success" && step.data) {
+function StepSuccessContent({ index, step, state }: Readonly<{ index: number; step: { data?: unknown }; state: FlowState }>): ReactNode {
+  if (index === 1 && step.data) {
     const d = step.data as { jurisdiction?: string; demo?: boolean };
-    if (d.demo) {
-      return (
-        <Badge variant="default">
-          <Sparks className="size-3" strokeWidth={1.5} aria-hidden="true" />
-          Test data
-        </Badge>
-      );
-    }
-    if (d.jurisdiction) {
-      return (
-        <Badge variant="success">
-          Jurisdiction: {d.jurisdiction}
-        </Badge>
-      );
-    }
+    if (d.demo) return <Badge variant="default"><Sparks className="size-3" strokeWidth={1.5} aria-hidden="true" />Test data</Badge>;
+    if (d.jurisdiction) return <Badge variant="success">Jurisdiction: {d.jurisdiction}</Badge>;
   }
-
-  if (index === 2 && step.status === "success" && step.data) {
+  if (index === 2 && step.data) {
     const d = step.data as { root?: string; demo?: boolean };
-    if (!d.demo && d.root) {
-      return (
-        <span className="font-mono text-[11px] text-muted">
-          root: {d.root}...
-        </span>
-      );
-    }
+    if (!d.demo && d.root) return <span className="font-mono text-[11px] text-muted">root: {d.root}...</span>;
   }
-
-  if (index === 3 && step.status === "success" && step.data) {
+  if (index === 3 && step.data) {
     const d = step.data as { proofPreview: string; publicInputCount: number };
     return (
       <div className="flex items-center gap-3">
-        <span className="font-mono text-[11px] text-stone">
-          {d.publicInputCount} public inputs
-        </span>
+        <span className="font-mono text-[11px] text-stone">{d.publicInputCount} public inputs</span>
         <CopyButton text={d.proofPreview} label="Copy proof bytes" />
       </div>
     );
   }
-
-  if (index === 4 && step.status === "success") {
+  if (index === 4) {
     const d = step.data as { signature?: string; skipped?: boolean; reason?: string } | undefined;
     if (state.mode === "demo" || d?.skipped) {
-      return (
-        <Badge variant="default">
-          <Sparks className="size-3" strokeWidth={1.5} aria-hidden="true" />
-          {d?.reason ?? "Skipped in demo"}
-        </Badge>
-      );
+      return <Badge variant="default"><Sparks className="size-3" strokeWidth={1.5} aria-hidden="true" />{d?.reason ?? "Skipped in demo"}</Badge>;
     }
     if (d?.signature) {
       return (
         <div className="flex items-center gap-2">
-          <code className="font-mono text-[11px] text-stone">
-            {d.signature.slice(0, 16)}...{d.signature.slice(-8)}
-          </code>
+          <code className="font-mono text-[11px] text-stone">{d.signature.slice(0, 16)}...{d.signature.slice(-8)}</code>
           <CopyButton text={d.signature} label="Copy transaction signature" />
         </div>
       );
     }
   }
-
   return null;
+}
+
+function StepContent({ index, state, startDemo, isRunning }: StepContentProps): ReactNode {
+  const step = state.steps[index]!;
+
+  switch (step.status) {
+    case "running": return <StepRunningContent />;
+    case "error": return <StepErrorContent index={index} step={step} startDemo={startDemo} isRunning={isRunning} />;
+    case "success": return <StepSuccessContent index={index} step={step} state={state} />;
+    default: return null;
+  }
 }
 
 /* ── Intro card (shown before flow starts) ───────────────────────── */
@@ -182,12 +151,12 @@ function IntroCard({
   canStart,
   onStart,
   onDemo,
-}: {
+}: Readonly<{
   connected: boolean;
   canStart: boolean;
   onStart: () => void;
   onDemo: () => void;
-}) {
+}>) {
   return (
     <motion.section
       initial={{ opacity: 0, y: 6 }}
@@ -247,11 +216,11 @@ function SummaryCard({
   state,
   txUrl,
   onReset,
-}: {
+}: Readonly<{
   state: FlowState;
   txUrl: string | null;
   onReset: () => void;
-}) {
+}>) {
   const totalMs = state.steps.reduce((sum, s) => sum + (s.durationMs ?? 0), 0);
   const proofStep = state.steps[3];
   const proofData = proofStep?.data as
@@ -357,7 +326,7 @@ function SummaryCard({
   );
 }
 
-function MiniStat({ label, value }: { label: string; value: string }) {
+function MiniStat({ label, value }: Readonly<{ label: string; value: string }>) {
   return (
     <div className="flex flex-col gap-1">
       <span className="font-mono text-[10px] tracking-[0.06em] text-muted uppercase">

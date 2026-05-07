@@ -21,13 +21,16 @@ const DOT_CLASS: Record<StepStatus, string> = {
   error: "border-danger-text bg-danger-text",
 };
 
-export function ProveProgressBar({ steps, currentStep }: ProveProgressBarProps) {
+export function ProveProgressBar({ steps, currentStep }: Readonly<ProveProgressBarProps>) {
   const completedCount = steps.filter((s) => s.status === "success").length;
 
   return (
     <>
+      <progress className="sr-only" value={completedCount} max={steps.length}>
+        {completedCount}/{steps.length} steps complete
+      </progress>
       {/* Desktop: dot indicators */}
-      <div className="hidden items-center gap-1 md:flex" role="progressbar" aria-valuenow={completedCount} aria-valuemin={0} aria-valuemax={steps.length} aria-label="Proof flow progress">
+      <div className="hidden items-center gap-1 md:flex" role="group" aria-label="Proof flow progress">
         {steps.map((step, i) => (
           <div key={step.id} className="flex items-center">
             <div

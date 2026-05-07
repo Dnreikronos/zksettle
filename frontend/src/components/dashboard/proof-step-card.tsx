@@ -8,13 +8,13 @@ import { cn } from "@/lib/cn";
 import type { StepStatus } from "@/lib/prove-flow";
 
 interface ProofStepCardProps {
-  stepNumber: number;
-  title: string;
-  description: string;
-  status: StepStatus;
-  durationMs?: number;
-  error?: string;
-  children?: ReactNode;
+  readonly stepNumber: number;
+  readonly title: string;
+  readonly description: string;
+  readonly status: StepStatus;
+  readonly durationMs?: number;
+  readonly error?: string;
+  readonly children?: ReactNode;
 }
 
 const STATUS_RING: Record<StepStatus, string> = {
@@ -23,6 +23,22 @@ const STATUS_RING: Record<StepStatus, string> = {
   success: "border-emerald bg-mint",
   error: "border-danger-text bg-danger-bg",
 };
+
+const STATUS_BORDER: Record<StepStatus, string> = {
+  error: "border-danger-text/30 bg-surface",
+  running: "border-forest/40 bg-surface",
+  success: "border-emerald/40 bg-surface",
+  idle: "border-border-subtle bg-surface",
+};
+
+function StepIndicatorIcon({ status, stepNumber }: Readonly<{ status: StepStatus; stepNumber: number }>) {
+  switch (status) {
+    case "success": return <Check className="size-4 text-forest" strokeWidth={2} />;
+    case "error": return <Xmark className="size-4 text-danger-text" strokeWidth={2} />;
+    case "running": return <span className="size-2 animate-pulse rounded-full bg-forest" />;
+    default: return <span className="text-muted">{stepNumber}</span>;
+  }
+}
 
 export function ProofStepCard({
   stepNumber,
@@ -39,13 +55,7 @@ export function ProofStepCard({
     <div
       className={cn(
         "relative rounded-[var(--radius-6)] border px-5 py-4 transition-colors duration-200",
-        status === "error"
-          ? "border-danger-text/30 bg-surface"
-          : status === "running"
-            ? "border-forest/40 bg-surface"
-            : status === "success"
-              ? "border-emerald/40 bg-surface"
-              : "border-border-subtle bg-surface",
+        STATUS_BORDER[status],
         status === "idle" && "opacity-50",
       )}
     >
@@ -58,15 +68,7 @@ export function ProofStepCard({
           )}
           aria-hidden="true"
         >
-          {status === "success" ? (
-            <Check className="size-4 text-forest" strokeWidth={2} />
-          ) : status === "error" ? (
-            <Xmark className="size-4 text-danger-text" strokeWidth={2} />
-          ) : status === "running" ? (
-            <span className="size-2 animate-pulse rounded-full bg-forest" />
-          ) : (
-            <span className="text-muted">{stepNumber}</span>
-          )}
+          <StepIndicatorIcon status={status} stepNumber={stepNumber} />
         </div>
 
         {/* Content */}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useState, type ReactNode } from "react";
 import { Key } from "iconoir-react";
 
 import { Button } from "@/components/ui/button";
@@ -15,8 +15,8 @@ export function RequireApiKey({ children }: Readonly<{ children: ReactNode }>) {
     setHasKey(!!getActiveApiKey());
 
     const handler = () => setHasKey(!!getActiveApiKey());
-    window.addEventListener("zks:active-key-changed", handler);
-    return () => window.removeEventListener("zks:active-key-changed", handler);
+    globalThis.addEventListener("zks:active-key-changed", handler);
+    return () => globalThis.removeEventListener("zks:active-key-changed", handler);
   }, []);
 
   if (hasKey === null) return null;
@@ -25,10 +25,12 @@ export function RequireApiKey({ children }: Readonly<{ children: ReactNode }>) {
   return <ApiKeyGate onSelected={() => setHasKey(true)} />;
 }
 
-function ApiKeyGate({ onSelected }: { onSelected: () => void }) {
+function ApiKeyGate({ onSelected }: Readonly<{ onSelected: () => void }>) {
   const { data, isLoading, isError, refetch } = useApiKeys();
   const createKey = useCreateApiKey();
   const [owner, setOwner] = useState("");
+  const pasteInputId = useId();
+  const ownerInputId = useId();
 
   const keys = data?.keys ?? [];
 
@@ -38,9 +40,6 @@ function ApiKeyGate({ onSelected }: { onSelected: () => void }) {
     onSelected();
   }, [createKey, owner, onSelected]);
 
-  // If the user picks an existing key from the dropdown, we don't have the raw key.
-  // The list only returns hashes. We need to ask the user to paste it or create a new one.
-  // For UX: show existing keys for reference but the action is "create new" or "paste existing".
   const [pasteMode, setPasteMode] = useState(false);
   const [pastedKey, setPastedKey] = useState("");
 
@@ -68,10 +67,10 @@ function ApiKeyGate({ onSelected }: { onSelected: () => void }) {
 
         {!isLoading && keys.length > 0 && !pasteMode && (
           <div className="mt-4 flex flex-col gap-3">
-            <label className="text-xs font-medium text-stone">
+            <p className="text-xs font-medium text-stone">
               You have {keys.length} key{keys.length > 1 ? "s" : ""} — paste one
               below or create a new one.
-            </label>
+            </p>
             <ul className="max-h-32 overflow-y-auto rounded-[var(--radius-2)] border border-border-subtle bg-canvas p-2 text-xs text-muted">
               {keys.map((k) => (
                 <li key={k.key_hash} className="flex justify-between py-0.5">
@@ -95,10 +94,11 @@ function ApiKeyGate({ onSelected }: { onSelected: () => void }) {
 
         {!isLoading && keys.length > 0 && pasteMode && (
           <div className="mt-4 flex flex-col gap-3">
-            <label className="text-xs font-medium text-stone">
+            <label htmlFor={pasteInputId} className="text-xs font-medium text-stone">
               Paste your API key (starts with <code className="font-mono">zks_</code>)
             </label>
             <Input
+              id={pasteInputId}
               value={pastedKey}
               onChange={(e) => setPastedKey(e.target.value)}
               placeholder="zks_…"
@@ -136,10 +136,11 @@ function ApiKeyGate({ onSelected }: { onSelected: () => void }) {
 
         {!isLoading && !isError && keys.length === 0 && (
           <div className="mt-4 flex flex-col gap-3">
-            <label className="text-xs font-medium text-stone">
+            <label htmlFor={ownerInputId} className="text-xs font-medium text-stone">
               No API keys found. Create one to get started.
             </label>
             <Input
+              id={ownerInputId}
               value={owner}
               onChange={(e) => setOwner(e.target.value)}
               placeholder="Key label (e.g. dashboard)"
