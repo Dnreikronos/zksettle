@@ -262,7 +262,8 @@ async function runStepConfirm(
   dispatch({ type: "STEP_RUNNING", step: 5 });
   const start = performance.now();
   if (txSignature) {
-    await connection.confirmTransaction(txSignature, "confirmed");
+    const latestBlockhash = await connection.getLatestBlockhash("confirmed");
+    await connection.confirmTransaction({ signature: txSignature, ...latestBlockhash }, "confirmed");
   }
   dispatch({
     type: "STEP_SUCCESS",
@@ -275,6 +276,51 @@ function stepError(dispatch: Dispatch<FlowAction>, step: number, err: unknown, f
   const msg = err instanceof Error ? err.message : fallback;
   dispatch({ type: "STEP_ERROR", step, error: msg });
   return msg;
+}
+
+async function runLiveFlow(
+  dispatch: Dispatch<FlowAction>,
+  walletHex: string,
+  publicKey: PublicKey,
+  connection: Connection,
+  sendTransaction: (tx: Transaction, conn: Connection) => Promise<string>,
+  generate: (inputs: ProofInputs) => Promise<ProofResult>,
+  ensureApi: () => Promise<import("@aztec/bb.js").Barretenberg>,
+  derivePrivateKey: () => Promise<string>,
+): Promise<void> {
+  let credential;
+  try { credential = await runStepCredential(dispatch, walletHex); }
+  catch (err) {
+    const msg = stepError(dispatch, 1, err, "Failed to fetch credential");
+    if (msg.includes("404")) {
+      dispatch({ type: "STEP_ERROR", step: 1, error: "No credential found for this wallet. Issue one from the Wallets & Credentials page, or try demo mode." });
+    }
+    return;
+  }
+
+  let paths;
+  try { paths = await runStepMerklePaths(dispatch, walletHex, derivePrivateKey); }
+  catch (err) { stepError(dispatch, 2, err, "Failed to fetch Merkle paths"); return; }
+
+  let step3Result;
+  try { step3Result = await runStepProofGeneration(dispatch, publicKey, credential, paths, ensureApi, generate); }
+  catch (err) { stepError(dispatch, 3, err, "Proof generation failed"); return; }
+
+  let txSignature: string | undefined;
+  try {
+    txSignature = await runStepSubmit(dispatch, step3Result.proofResult, publicKey, connection, sendTransaction, step3Result);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Transaction failed";
+    const isRejected = message.includes("rejected") || message.includes("User rejected");
+    dispatch({ type: "STEP_ERROR", step: 4, error: isRejected ? "Transaction rejected by wallet." : message });
+    return;
+  }
+
+  try { await runStepConfirm(dispatch, connection, txSignature); }
+  catch (err) {
+    if (txSignature) { stepError(dispatch, 5, err, "Confirmation failed"); }
+    else { dispatch({ type: "STEP_SUCCESS", step: 5 }); }
+  }
 }
 
 // ── Hook ────────────────────────────────────────────────────────────
@@ -319,39 +365,7 @@ export function useProveFlow(): UseProveFlowReturn {
         return;
       }
 
-      let credential;
-      try { credential = await runStepCredential(dispatch, walletHex); }
-      catch (err) {
-        const msg = stepError(dispatch, 1, err, "Failed to fetch credential");
-        if (msg.includes("404")) {
-          dispatch({ type: "STEP_ERROR", step: 1, error: "No credential found for this wallet. Issue one from the Wallets & Credentials page, or try demo mode." });
-        }
-        return;
-      }
-
-      let paths;
-      try { paths = await runStepMerklePaths(dispatch, walletHex, derivePrivateKey); }
-      catch (err) { stepError(dispatch, 2, err, "Failed to fetch Merkle paths"); return; }
-
-      let step3Result;
-      try { step3Result = await runStepProofGeneration(dispatch, publicKey, credential, paths, ensureApi, generate); }
-      catch (err) { stepError(dispatch, 3, err, "Proof generation failed"); return; }
-
-      let txSignature: string | undefined;
-      try {
-        txSignature = await runStepSubmit(dispatch, step3Result.proofResult, publicKey, connection, sendTransaction, step3Result);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : "Transaction failed";
-        const isRejected = message.includes("rejected") || message.includes("User rejected");
-        dispatch({ type: "STEP_ERROR", step: 4, error: isRejected ? "Transaction rejected by wallet." : message });
-        return;
-      }
-
-      try { await runStepConfirm(dispatch, connection, txSignature); }
-      catch (err) {
-        if (txSignature) { stepError(dispatch, 5, err, "Confirmation failed"); }
-        else { dispatch({ type: "STEP_SUCCESS", step: 5 }); }
-      }
+      await runLiveFlow(dispatch, walletHex, publicKey, connection, sendTransaction, generate, ensureApi, derivePrivateKey);
     },
     [connected, publicKey, walletHex, connection, sendTransaction, generate, ensureApi, derivePrivateKey],
   );
