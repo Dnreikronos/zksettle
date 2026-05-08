@@ -90,11 +90,11 @@ anchor-build-idl:
 
 # Anchor deploy zksettle (uses RPC_URL from .env)
 anchor-deploy:
-    cd backend && anchor deploy --provider.cluster ${RPC_URL:?Set RPC_URL in .env} --program-name zksettle
+    cd backend && anchor deploy --provider.cluster "${RPC_URL:?Set RPC_URL in .env}" --program-name zksettle
 
 # Anchor deploy stablecoin (uses RPC_URL from .env)
 anchor-deploy-stablecoin:
-    cd backend && anchor deploy --provider.cluster ${RPC_URL:?Set RPC_URL in .env} --program-name stablecoin
+    cd backend && anchor deploy --provider.cluster "${RPC_URL:?Set RPC_URL in .env}" --program-name stablecoin
 
 # Anchor deploy both programs (uses RPC_URL from .env)
 anchor-deploy-all: anchor-deploy anchor-deploy-stablecoin
