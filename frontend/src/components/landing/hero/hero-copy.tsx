@@ -200,7 +200,7 @@ export function HeroCopy() {
                 const isLastWord = i > lastSpaceIdx;
                 const hoverCh = overrides.get(i);
                 const isHoverScrambled = hoverCh !== undefined;
-                const isDecoded = isHoverScrambled ? false : cipher.decoded[i];
+                const isDecoded = isHoverScrambled ? false : (cipher.decoded[i] ?? false);
                 const displayCh = isHoverScrambled ? hoverCh : ch;
 
                 return (
