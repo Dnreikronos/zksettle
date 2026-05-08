@@ -31,7 +31,7 @@ pub async fn handler(
         return Err(ServiceError::WalletRevoked);
     }
 
-    // The jurisdiction tree currently has a single leaf (index 0) = poseidon2_hash([1])
+    // The jurisdiction tree currently has a single leaf (index 0) = poseidon2_hash([JURISDICTION_ID])
     let proof = st.jurisdiction_tree.proof(0)?;
     let root = st.jurisdiction_tree.root();
 
