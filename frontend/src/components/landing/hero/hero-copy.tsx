@@ -113,7 +113,7 @@ export function HeroCopy() {
   const { overrides, scrambleWord } = useWordScramble(headline);
 
   const canHover = useMemo(() => {
-    if (typeof globalThis.window === "undefined") return false;
+    if (globalThis.window === undefined) return false;
     return globalThis.matchMedia("(hover: hover)").matches;
   }, []);
 
@@ -188,7 +188,7 @@ export function HeroCopy() {
           {words.map((word, wi) => (
             <span
               key={`${word.start}-${word.end}`}
-              role="presentation"
+              aria-hidden="true"
               className={cn(
                 "inline-flex cursor-default whitespace-nowrap",
                 wi > 0 && "ml-[0.27em]",
