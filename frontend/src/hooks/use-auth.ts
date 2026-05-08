@@ -42,11 +42,20 @@ export function useSignOut() {
 
   return useMutation({
     mutationFn: authSignOut,
-    onSuccess: () => {
-      clearActiveApiKey();
-      queryClient.removeQueries();
+    // onSettled instead of onSuccess so we still tear the session down if the
+    // gateway's /auth/logout returns a non-2xx (already-expired session, etc).
+    onSettled: () => {
+      // Push null synchronously so subscribed observers (RequireAuth's
+      // useAuth) re-render immediately. removeQueries() alone unsubscribes
+      // observers without triggering re-renders, which is what was leaving
+      // the UI looking logged-in until a manual refresh.
+      queryClient.setQueryData(authMeQueryKey, null);
+      queryClient.clear();
       disconnect();
       router.replace("/login");
+      // Fire-and-forget: clearing the local active-key cookie shouldn't block
+      // the redirect.
+      void clearActiveApiKey().catch(() => {});
     },
   });
 }

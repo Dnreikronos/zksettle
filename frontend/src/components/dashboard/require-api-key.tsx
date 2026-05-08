@@ -1,53 +1,166 @@
 "use client";
 
 import { useCallback, useEffect, useId, useState, type ReactNode } from "react";
-import { Key } from "iconoir-react";
+import { Copy, Key, WarningTriangle } from "iconoir-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { getActiveApiKey, setActiveApiKey } from "@/lib/api/active-key";
+import {
+  fetchActiveKeyStatus,
+  onActiveKeyChanged,
+  setActiveApiKey,
+  type ActiveKeyStatus,
+} from "@/lib/api/active-key";
 import { useApiKeys, useCreateApiKey, lookupKeyPrefix } from "@/hooks/use-api-keys";
 
+const KEY_FORMAT = /^zks_[A-Za-z0-9_-]{32,}$/;
+
 export function RequireApiKey({ children }: Readonly<{ children: ReactNode }>) {
-  const [hasKey, setHasKey] = useState<boolean | null>(null);
+  const [status, setStatus] = useState<ActiveKeyStatus | null>(null);
 
   useEffect(() => {
-    setHasKey(!!getActiveApiKey());
-
-    const handler = () => setHasKey(!!getActiveApiKey());
-    globalThis.addEventListener("zks:active-key-changed", handler);
-    return () => globalThis.removeEventListener("zks:active-key-changed", handler);
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        const next = await fetchActiveKeyStatus();
+        if (!cancelled) setStatus(next);
+      } catch {
+        if (!cancelled) setStatus({ hasKey: false });
+      }
+    };
+    void refresh();
+    const off = onActiveKeyChanged(() => void refresh());
+    return () => {
+      cancelled = true;
+      off();
+    };
   }, []);
 
-  if (hasKey === null) return null;
-  if (hasKey) return <>{children}</>;
+  if (status === null) {
+    return (
+      <div
+        role="status"
+        aria-live="polite"
+        aria-busy="true"
+        className="flex min-h-[40vh] items-center justify-center px-4"
+      >
+        <div className="h-32 w-full max-w-md animate-pulse rounded-[var(--radius-6)] border border-border-subtle bg-surface" />
+        <span className="sr-only">Checking active API key…</span>
+      </div>
+    );
+  }
 
-  return <ApiKeyGate onSelected={() => setHasKey(true)} />;
+  if (status.hasKey) return <>{children}</>;
+
+  return <ApiKeyGate />;
 }
 
-function ApiKeyGate({ onSelected }: Readonly<{ onSelected: () => void }>) {
+function ApiKeyGate() {
   const { data, isLoading, isError, refetch } = useApiKeys();
   const createKey = useCreateApiKey();
   const [owner, setOwner] = useState("");
+  const [pasteMode, setPasteMode] = useState(false);
+  const [pastedKey, setPastedKey] = useState("");
+  const [activateError, setActivateError] = useState<string | null>(null);
+  const [revealedKey, setRevealedKey] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
   const pasteInputId = useId();
   const ownerInputId = useId();
 
   const keys = data?.keys ?? [];
 
   const handleCreate = useCallback(async () => {
-    const result = await createKey.mutateAsync(owner || "dashboard");
-    setActiveApiKey(result.api_key);
-    onSelected();
-  }, [createKey, owner, onSelected]);
+    setActivateError(null);
+    try {
+      const result = await createKey.mutateAsync(owner || "dashboard");
+      // Reveal the key first; activation happens on user confirmation so they
+      // have a chance to copy the secret before the gate closes.
+      setRevealedKey(result.api_key);
+      setCopied(false);
+    } catch (err) {
+      setActivateError(err instanceof Error ? err.message : "Failed to create key");
+    }
+  }, [createKey, owner]);
 
-  const [pasteMode, setPasteMode] = useState(false);
-  const [pastedKey, setPastedKey] = useState("");
+  const handleConfirmReveal = useCallback(async () => {
+    if (!revealedKey) return;
+    setActivateError(null);
+    try {
+      await setActiveApiKey(revealedKey);
+    } catch (err) {
+      setActivateError(err instanceof Error ? err.message : "Failed to activate key");
+    }
+  }, [revealedKey]);
 
-  const handlePaste = useCallback(() => {
-    if (!pastedKey.startsWith("zks_")) return;
-    setActiveApiKey(pastedKey);
-    onSelected();
-  }, [pastedKey, onSelected]);
+  const copyRevealedKey = useCallback(async () => {
+    if (!revealedKey) return;
+    try {
+      await navigator.clipboard.writeText(revealedKey);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setCopied(false);
+    }
+  }, [revealedKey]);
+
+  const isPasteValid = KEY_FORMAT.test(pastedKey);
+
+  const handlePaste = useCallback(async () => {
+    setActivateError(null);
+    if (!isPasteValid) return;
+    try {
+      await setActiveApiKey(pastedKey);
+    } catch (err) {
+      setActivateError(err instanceof Error ? err.message : "Failed to activate key");
+    }
+  }, [pastedKey, isPasteValid]);
+
+  if (revealedKey) {
+    return (
+      <div className="flex min-h-[40vh] items-center justify-center px-4">
+        <div className="w-full max-w-lg rounded-[var(--radius-6)] border border-border-subtle bg-surface p-6">
+          <div className="flex items-start gap-3">
+            <WarningTriangle aria-hidden="true" className="mt-1 size-5 shrink-0 text-rust" />
+            <div className="flex flex-col gap-1">
+              <h2 className="font-display text-xl text-ink">Copy this key now</h2>
+              <p className="text-sm text-stone">
+                We won&apos;t show it again. Store it in your secret manager before
+                continuing — you&apos;ll need it for any non-dashboard usage (SDK, curl,
+                CI). The key will also be set as your active key in an HttpOnly cookie.
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-5 flex items-center gap-2 rounded-[var(--radius-3)] border border-border-subtle bg-canvas p-3">
+            <code className="flex-1 break-all font-mono text-sm text-ink">
+              {revealedKey}
+            </code>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={copyRevealedKey}
+              aria-label="Copy API key"
+            >
+              <Copy aria-hidden="true" className="size-4" />
+              {copied ? "Copied" : "Copy"}
+            </Button>
+          </div>
+
+          {activateError && (
+            <p role="alert" className="mt-3 text-xs text-red-600">
+              {activateError}
+            </p>
+          )}
+
+          <div className="mt-6 flex justify-end">
+            <Button variant="primary" size="md" onClick={handleConfirmReveal}>
+              I saved it — continue
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex min-h-[40vh] items-center justify-center px-4">
@@ -57,8 +170,8 @@ function ApiKeyGate({ onSelected }: Readonly<{ onSelected: () => void }>) {
           <h2 className="text-sm font-medium">API key required</h2>
         </div>
         <p className="mt-2 text-xs leading-relaxed text-stone">
-          This page makes requests through the gateway proxy. Select an existing
-          API key or create a new one to continue.
+          Select an existing API key or create a new one to continue. The key is stored
+          server-side as an HttpOnly cookie — never exposed to JavaScript.
         </p>
 
         {isLoading && (
@@ -104,19 +217,23 @@ function ApiKeyGate({ onSelected }: Readonly<{ onSelected: () => void }>) {
               placeholder="zks_…"
               className="font-mono text-xs"
             />
+            {pastedKey && !isPasteValid && (
+              <p className="text-xs text-red-600">
+                Invalid format. Keys must match <code>zks_</code> followed by 32+ characters.
+              </p>
+            )}
             <div className="flex gap-2">
               <Button
                 size="sm"
                 variant="ghost"
-                onClick={() => setPasteMode(false)}
+                onClick={() => {
+                  setPasteMode(false);
+                  setPastedKey("");
+                }}
               >
                 Back
               </Button>
-              <Button
-                size="sm"
-                onClick={handlePaste}
-                disabled={!pastedKey.startsWith("zks_")}
-              >
+              <Button size="sm" onClick={handlePaste} disabled={!isPasteValid}>
                 Use this key
               </Button>
             </div>
@@ -152,11 +269,12 @@ function ApiKeyGate({ onSelected }: Readonly<{ onSelected: () => void }>) {
           </div>
         )}
 
-        {createKey.isError && (
+        {(createKey.isError || activateError) && (
           <p className="mt-2 text-xs text-red-600">
-            {createKey.error instanceof Error
-              ? createKey.error.message
-              : "Failed to create key"}
+            {activateError ??
+              (createKey.error instanceof Error
+                ? createKey.error.message
+                : "Failed to create key")}
           </p>
         )}
       </div>
