@@ -286,7 +286,7 @@ async function main() {
 
   const report: StressTestReport = {
     timestamp: new Date().toISOString(),
-    config: { ...config, output: undefined as never },
+    config: { rpc: config.rpc, count: config.count, concurrency: config.concurrency, mint: config.mint },
     results: results.sort((a, b) => a.index - b.index),
     summary: {
       total: config.count,
