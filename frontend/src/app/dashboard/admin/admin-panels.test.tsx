@@ -41,6 +41,13 @@ vi.mock("@/lib/stablecoin", async () => {
   return {
     ...actual,
     STABLECOIN_MINT_CONFIGURED: true,
+    // Bypass the real adapter entirely so the SDK module never has to
+    // resolve in tests — defends against future static imports leaking
+    // in via the barrel export.
+    getStablecoinAdapter: () => ({
+      getTreasury: vi.fn().mockResolvedValue(null),
+      listRedemptions: vi.fn().mockResolvedValue([]),
+    }),
   };
 });
 

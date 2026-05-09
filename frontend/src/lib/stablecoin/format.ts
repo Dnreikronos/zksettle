@@ -5,6 +5,13 @@ import { REDEMPTION_EXPIRY_SECS } from "./program";
 import type { RedemptionRequest, Treasury } from "./types";
 
 const DECIMAL_BASE = 10n;
+const ZERO_CHAR = "0";
+
+function trimTrailingZeros(input: string): string {
+  let end = input.length;
+  while (end > 0 && input[end - 1] === ZERO_CHAR) end--;
+  return input.slice(0, end);
+}
 
 export function formatAmount(value: BN | bigint, decimals: number): string {
   const raw = typeof value === "bigint" ? value : BigInt(value.toString());
@@ -13,7 +20,9 @@ export function formatAmount(value: BN | bigint, decimals: number): string {
   const whole = raw / divisor;
   const fraction = raw % divisor;
   if (fraction === 0n) return whole.toString();
-  const fractionStr = fraction.toString().padStart(decimals, "0").replace(/0+$/, "");
+  const fractionStr = trimTrailingZeros(
+    fraction.toString().padStart(decimals, "0"),
+  );
   return fractionStr.length > 0 ? `${whole}.${fractionStr}` : whole.toString();
 }
 
@@ -41,16 +50,21 @@ export interface MintCapProgress {
   belowMinted: boolean;
 }
 
+const RATIO_PRECISION = 10_000n;
+
 export function mintCapProgress(treasury: Treasury): MintCapProgress {
   const cap = BigInt(treasury.mintCap.toString());
   const minted = BigInt(treasury.totalMinted.toString());
   if (cap === 0n) {
     return { capped: false, ratio: 0, belowMinted: false };
   }
-  const ratio = minted === 0n ? 0 : Number(minted) / Number(cap);
+  let ratio: number;
+  if (minted === 0n) ratio = 0;
+  else if (minted >= cap) ratio = 1;
+  else ratio = Number((minted * RATIO_PRECISION) / cap) / Number(RATIO_PRECISION);
   return {
     capped: true,
-    ratio: Math.min(1, ratio),
+    ratio,
     belowMinted: minted > cap,
   };
 }

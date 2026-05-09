@@ -1,5 +1,5 @@
 import { BN } from "@coral-xyz/anchor";
-import { Keypair, PublicKey, Transaction } from "@solana/web3.js";
+import { PublicKey, Transaction } from "@solana/web3.js";
 
 import { STABLECOIN_DECIMALS } from "./program";
 import type {
@@ -22,13 +22,29 @@ function pubkeyFromEnv(value: string | undefined): PublicKey | null {
   }
 }
 
+// Deterministic 32-byte keys derived from a fixed seed phrase. Using
+// PublicKey.unique() / Keypair.generate() drifts between runs and breaks
+// snapshot stability for storybook / demo screenshots.
+function keyFromLabel(label: string): PublicKey {
+  const bytes = new Uint8Array(32);
+  for (let i = 0; i < label.length && i < 32; i++) {
+    bytes[i] = label.charCodeAt(i) % 256;
+  }
+  bytes[31] = 1;
+  return new PublicKey(bytes);
+}
+
 const MOCK_ADMIN =
   pubkeyFromEnv(process.env.NEXT_PUBLIC_STABLECOIN_MOCK_ADMIN) ??
-  Keypair.generate().publicKey;
+  keyFromLabel("zksettle-mock-admin");
 const MOCK_OPERATOR =
   pubkeyFromEnv(process.env.NEXT_PUBLIC_STABLECOIN_MOCK_OPERATOR) ??
-  Keypair.generate().publicKey;
-const MOCK_MINT = Keypair.generate().publicKey;
+  keyFromLabel("zksettle-mock-operator");
+const MOCK_MINT = keyFromLabel("zksettle-mock-mint");
+
+// Wall-clock-free baseline; ages below are computed against this fixed point
+// so test runs and demo snapshots stay deterministic across executions.
+const MOCK_NOW_SECS = 1_715_000_000;
 
 const treasuryStore: Treasury = {
   admin: MOCK_ADMIN,
@@ -49,14 +65,14 @@ function makeRedemption(
   nonce: number,
 ): RedemptionRequest {
   return {
-    pda: Keypair.generate().publicKey,
-    holder: Keypair.generate().publicKey,
-    treasury: Keypair.generate().publicKey,
+    pda: keyFromLabel(`zksettle-mock-redemption-pda-${nonce}`),
+    holder: keyFromLabel(`zksettle-mock-redemption-holder-${nonce}`),
+    treasury: keyFromLabel("zksettle-mock-treasury"),
     mint: treasuryStore.mint,
-    tokenAccount: Keypair.generate().publicKey,
+    tokenAccount: keyFromLabel(`zksettle-mock-redemption-ata-${nonce}`),
     amount: unit(amount),
     nonce: new BN(nonce),
-    requestedAt: Math.floor(Date.now() / 1000) - ageSecs,
+    requestedAt: MOCK_NOW_SECS - ageSecs,
   };
 }
 
@@ -75,8 +91,10 @@ export const mockAdapter: StablecoinAdapter = {
   async getTreasury(_, mint): Promise<Treasury> {
     return { ...treasuryStore, mint };
   },
-  async listRedemptions(): Promise<RedemptionRequest[]> {
-    return [...redemptionsStore];
+  async listRedemptions(_, mint): Promise<RedemptionRequest[]> {
+    return redemptionsStore
+      .filter((r) => r.mint.equals(mint) || r.mint.equals(treasuryStore.mint))
+      .map((r) => ({ ...r, mint }));
   },
   async buildSetOperator(ctx: AdapterContext) {
     return emptyTx(ctx.payer);

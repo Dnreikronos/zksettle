@@ -18,18 +18,23 @@ export const SEEDS = {
 
 const FALLBACK_MINT = "11111111111111111111111111111111";
 
-function resolveMint(value: string | undefined): PublicKey {
-  if (!value) return new PublicKey(FALLBACK_MINT);
+interface ResolvedMint {
+  mint: PublicKey;
+  configured: boolean;
+}
+
+function resolveMint(value: string | undefined): ResolvedMint {
+  if (!value) {
+    return { mint: new PublicKey(FALLBACK_MINT), configured: false };
+  }
   try {
-    return new PublicKey(value);
+    return { mint: new PublicKey(value), configured: true };
   } catch {
-    return new PublicKey(FALLBACK_MINT);
+    return { mint: new PublicKey(FALLBACK_MINT), configured: false };
   }
 }
 
-export const STABLECOIN_MINT = resolveMint(
-  process.env.NEXT_PUBLIC_STABLECOIN_MINT,
-);
+const resolvedMint = resolveMint(process.env.NEXT_PUBLIC_STABLECOIN_MINT);
 
-export const STABLECOIN_MINT_CONFIGURED =
-  !!process.env.NEXT_PUBLIC_STABLECOIN_MINT;
+export const STABLECOIN_MINT = resolvedMint.mint;
+export const STABLECOIN_MINT_CONFIGURED = resolvedMint.configured;

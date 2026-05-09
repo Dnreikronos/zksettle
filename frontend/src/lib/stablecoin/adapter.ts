@@ -6,9 +6,11 @@ export type AdapterKind = "mock" | "sdk";
 
 function resolveAdapterKind(): AdapterKind {
   const raw = process.env.NEXT_PUBLIC_STABLECOIN_ADAPTER;
-  if (raw === "mock") return "mock";
-  if (raw === "sdk") return "sdk";
-  return "sdk";
+  if (!raw) return "sdk";
+  if (raw === "mock" || raw === "sdk") return raw;
+  throw new Error(
+    `Invalid NEXT_PUBLIC_STABLECOIN_ADAPTER="${raw}". Expected "sdk" or "mock".`,
+  );
 }
 
 export const STABLECOIN_ADAPTER_KIND: AdapterKind = resolveAdapterKind();

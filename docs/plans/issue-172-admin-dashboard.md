@@ -15,19 +15,23 @@ the abstraction's implementation — no UI rewrites.
 2. **Build full UI against the contract.** Role detection, treasury
    overview, admin panel, operator panel, redemption queue, confirmation
    dialog, route, conditional nav, toasts, tests.
-3. **Two adapters, one default.**
-   - `mockAdapter` — deterministic fixtures; default in dev, test, and
-     storybook-like manual smoke. Keeps the page demoable and lets us
-     exercise every state (paused, frozen, pending admin, etc.).
-   - `sdkAdapter` — placeholder file with `throw new Error("issue #171
-     not yet merged")` stubs that satisfy the local interface. **Does
-     not import from `@zksettle/sdk`** so `pnpm typecheck` / `pnpm
-     build` stay green.
-   Selector lives in `lib/stablecoin/config.ts` and reads
-   `NEXT_PUBLIC_STABLECOIN_ADAPTER` (`"mock" | "sdk"`, default `"mock"`).
-4. **When #171 lands:** rewrite `sdkAdapter` body using the real SDK
-   exports (interface already 1:1), set the env to `"sdk"`, drop the
-   throw stubs. UI does not move.
+3. **Two adapters, sdk is the default.**
+   - `sdkAdapter` — calls the real `@zksettle/sdk` (PDAs, instruction
+     builders, account decoders). This is the production path and the
+     default for any environment that does not opt in to mock mode.
+   - `mockAdapter` — deterministic fixtures (seeded keys, fixed
+     timestamps). Used by every vitest run and available as an opt-in
+     for offline manual smoke / demo screenshots.
+   Selector lives in `lib/stablecoin/adapter.ts` and reads
+   `NEXT_PUBLIC_STABLECOIN_ADAPTER` (`"sdk"` | `"mock"`). Empty/unset
+   resolves to `"sdk"`. Any other value throws a descriptive error so
+   typos like `sdkk` cannot route destructive actions to live RPC.
+4. **Required to ship:** set `NEXT_PUBLIC_STABLECOIN_MINT` to the
+   deployed devnet/mainnet mint and confirm
+   `NEXT_PUBLIC_STABLECOIN_ADAPTER` is unset (or `"sdk"`) in
+   production. The mock-only `NEXT_PUBLIC_STABLECOIN_MOCK_ADMIN` /
+   `_OPERATOR` overrides are ignored when `adapter=sdk` and never
+   need to be set in prod.
 
 ## On-chain reference (verified against `backend/programs/stablecoin/`)
 
