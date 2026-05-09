@@ -45,7 +45,7 @@ export function PortalBreach() {
               start: "top top",
               end: "+=200%",
               pin: true,
-              scrub: 1.2,
+              scrub: 0.8,
               onUpdate: (self) => {
                 scrollStateRef.current.breachProgress = self.progress;
               },
