@@ -1,208 +1,208 @@
 /**
  * On-chain CU benchmark for zksettle (issue #99, PRD §11).
  *
- * Uses the chunked hook path:
- *   1. Register issuer with fixture roots
- *   2. init_hook_payload → write_hook_proof → finalize_hook_payload
+ * Uses devnet-state.json (from setup.ts) for account addresses, then:
+ *   1. Update issuer roots to match fixture
+ *   2. Upload proof via chunked flow (init → write → finalize)
  *   3. Simulate settle_hook to measure gnark verification CU
+ *   4. Compute SOL cost per verification
  *
  * Usage:
- *   ANCHOR_WALLET=~/.config/solana/id.json ./node_modules/.bin/ts-node benchmark-cu.ts
+ *   ANCHOR_WALLET=~/.config/solana/id.json npx ts-node benchmark-cu.ts [--runs N] [--live]
  */
 
 import {
   Connection,
-  Keypair,
   PublicKey,
-  SystemProgram,
-  ComputeBudgetProgram,
-  VersionedTransaction,
-  TransactionMessage,
 } from "@solana/web3.js";
-import { Program, AnchorProvider, Wallet, BN } from "@coral-xyz/anchor";
+import { Program, AnchorProvider, Wallet } from "@coral-xyz/anchor";
 import * as fs from "fs";
-import * as os from "os";
 import * as path from "path";
 
-const ZKSETTLE_PROGRAM_ID = new PublicKey(
-  "2HexcvYg6zvQo6kf1ompmvG78GUKMTW292kp1wDdKzFk"
-);
-const MPL_BUBBLEGUM_ID = new PublicKey(
-  "BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY"
-);
-const SPL_ACCOUNT_COMPRESSION_ID = new PublicKey(
-  "cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK"
-);
-const NOOP_PROGRAM_ID = new PublicKey(
-  "noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV"
+import {
+  ZKSETTLE_PROGRAM_ID,
+  HOOK_PAYLOAD_SEED,
+  MERKLE_ROOT,
+  SANCTIONS_ROOT,
+  JURISDICTION_ROOT,
+  PRIORITY_FEE_MICRO_LAMPORTS,
+  LAMPORTS_PER_SOL,
+  pda,
+  solCostFromCu,
+  percentile,
+  exists,
+  loadWallet,
+  loadProofAndWitness,
+  uploadProof,
+  simulateSettle,
+  liveSettle,
+} from "../lib/benchmark-utils";
+
+const idlJson = JSON.parse(
+  fs.readFileSync(path.join(__dirname, "..", "..", "sdk", "src", "idl", "zksettle.json"), "utf-8")
 );
 
-const ISSUER_SEED = Buffer.from("issuer");
-const BUBBLEGUM_REGISTRY_SEED = Buffer.from("bubblegum-registry");
-const BUBBLEGUM_TREE_CREATOR_SEED = Buffer.from("bubblegum-tree-creator");
-const HOOK_PAYLOAD_SEED = Buffer.from("hook-payload");
+const STATE_FILE = path.join(__dirname, "devnet-state.json");
 
-const MERKLE_ROOT = Buffer.from("0408f1aa9155d9f7405d652b9c5dd4cd69602fff5fba80e1d6bd0a36c3add6d1", "hex");
-const NULLIFIER = Buffer.from("1d6ac8cee9f7b2d8f092a9169a9f49d81bb1ef665e21732414dcbe559ea0d560", "hex");
-const SANCTIONS_ROOT = Buffer.from("03f5d399d3a5403fafb12fdab7483b3170812ee4e66e812bc8587e6921da2b4a", "hex");
-const JURISDICTION_ROOT = Buffer.from("0408f1aa9155d9f7405d652b9c5dd4cd69602fff5fba80e1d6bd0a36c3add6d1", "hex");
-
-function loadWallet(): Keypair {
-  const p = process.env.ANCHOR_WALLET || path.join(os.homedir(), ".config/solana/id.json");
-  return Keypair.fromSecretKey(Uint8Array.from(JSON.parse(fs.readFileSync(p, "utf-8"))));
+interface DevnetState {
+  mint: string;
+  issuerPda: string;
+  registryPda: string;
+  hookPayloadPda: string;
+  recipient: string;
+  merkleTree: string;
 }
 
-function loadIdl(): any {
-  return JSON.parse(fs.readFileSync(path.join(__dirname, "..", "..", "sdk", "dist", "idl", "zksettle.json"), "utf-8"));
+function parseArgs(): { runs: number; live: boolean } {
+  const args = process.argv.slice(2);
+  let runs = 5;
+  let live = false;
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--live") { live = true; continue; }
+    if (args[i] === "--runs" && args[i + 1]) { runs = parseInt(args[++i], 10); }
+  }
+  return { runs, live };
 }
 
-function loadProofAndWitness(): Buffer {
-  const base = path.join(__dirname, "..", "..", "circuits", "target");
-  const proof = fs.readFileSync(path.join(base, "zksettle_slice.proof"));
-  const witness = fs.readFileSync(path.join(base, "zksettle_slice.pw"));
-  return Buffer.concat([proof, witness]);
-}
-
-function pda(seeds: Buffer[]): PublicKey {
-  return PublicKey.findProgramAddressSync(seeds, ZKSETTLE_PROGRAM_ID)[0];
-}
-
-async function exists(c: Connection, pk: PublicKey): Promise<boolean> {
-  return (await c.getAccountInfo(pk)) !== null;
+function loadState(): DevnetState {
+  if (!fs.existsSync(STATE_FILE)) {
+    console.error("No devnet-state.json. Run setup.ts first.");
+    process.exit(1);
+  }
+  return JSON.parse(fs.readFileSync(STATE_FILE, "utf-8"));
 }
 
 async function main() {
+  const { runs, live } = parseArgs();
   const wallet = loadWallet();
-  const connection = new Connection(process.env.RPC_URL || "https://api.devnet.solana.com", "confirmed");
+  const state = loadState();
+  const circuitsBase = path.join(__dirname, "..", "..", "circuits", "target");
+  const proofAndWitness = loadProofAndWitness(circuitsBase);
+
+  const connection = new Connection(
+    process.env.RPC_URL || "https://api.devnet.solana.com", "confirmed"
+  );
   const provider = new AnchorProvider(connection, new Wallet(wallet), { commitment: "confirmed" });
-  const program = new Program(loadIdl(), provider);
-  const proofAndWitness = loadProofAndWitness();
+  const program = new Program(idlJson as any, provider);
 
-  console.log("=== ZKSettle CU Benchmark ===\n");
-  console.log(`Wallet:  ${wallet.publicKey.toBase58()}`);
-  console.log(`Proof+witness: ${proofAndWitness.length} bytes`);
-  console.log(`Balance: ${((await connection.getBalance(wallet.publicKey)) / 1e9).toFixed(4)} SOL\n`);
-
-  const issuerPda = pda([ISSUER_SEED, wallet.publicKey.toBuffer()]);
+  const issuerPda = new PublicKey(state.issuerPda);
   const hookPayloadPda = pda([HOOK_PAYLOAD_SEED, wallet.publicKey.toBuffer()]);
-  const registryPda = pda([BUBBLEGUM_REGISTRY_SEED]);
-  const treeCreator = pda([BUBBLEGUM_TREE_CREATOR_SEED]);
+  const registryPda = new PublicKey(state.registryPda);
+  const mintPk = new PublicKey(state.mint);
+  const recipientPk = new PublicKey(state.recipient);
+  const merkleTree = new PublicKey(state.merkleTree);
 
-  const mintBytes = Buffer.alloc(32);
-  for (let i = 16; i < 32; i++) mintBytes[i] = 0x01;
-  const mint = new PublicKey(mintBytes);
+  console.log("=== ZKSettle CU Benchmark (devnet-hook) ===\n");
+  console.log(`Wallet:        ${wallet.publicKey.toBase58()}`);
+  console.log(`Program:       ${ZKSETTLE_PROGRAM_ID.toBase58()}`);
+  console.log(`Mint:          ${mintPk.toBase58()}`);
+  console.log(`Proof+witness: ${proofAndWitness.length} bytes`);
+  console.log(`Mode:          ${live ? "LIVE" : "SIMULATE"}`);
+  console.log(`Runs:          ${runs}`);
 
-  const recipientBytes = Buffer.alloc(32);
-  for (let i = 16; i < 32; i++) recipientBytes[i] = 0x02;
-  const recipient = new PublicKey(recipientBytes);
+  const balance = await connection.getBalance(wallet.publicKey);
+  console.log(`Balance:       ${(balance / LAMPORTS_PER_SOL).toFixed(4)} SOL\n`);
 
-  // 1. Register/update issuer
-  if (await exists(connection, issuerPda)) {
-    console.log("Updating issuer roots...");
-    await program.methods
-      .updateIssuerRoot(Array.from(MERKLE_ROOT), Array.from(SANCTIONS_ROOT), Array.from(JURISDICTION_ROOT))
-      .accounts({ authority: wallet.publicKey, issuer: issuerPda })
-      .signers([wallet]).rpc({ commitment: "confirmed" });
-    console.log("  Done.");
-  } else {
-    console.log("Registering issuer...");
-    await program.methods
-      .registerIssuer(Array.from(MERKLE_ROOT), Array.from(SANCTIONS_ROOT), Array.from(JURISDICTION_ROOT))
-      .accounts({ authority: wallet.publicKey, issuer: issuerPda, systemProgram: SystemProgram.programId })
-      .signers([wallet]).rpc({ commitment: "confirmed" });
-    console.log("  Done.");
+  if (balance < 0.5 * LAMPORTS_PER_SOL) {
+    console.error("Need ≥ 0.5 SOL. Run: solana airdrop 2 --url devnet");
+    process.exit(1);
   }
 
-  // 2. Close existing payload
-  if (await exists(connection, hookPayloadPda)) {
-    console.log("Closing existing payload...");
+  console.log("Updating issuer roots...");
+  await program.methods
+    .updateIssuerRoot(Array.from(MERKLE_ROOT), Array.from(SANCTIONS_ROOT), Array.from(JURISDICTION_ROOT))
+    .accounts({ authority: wallet.publicKey, issuer: issuerPda })
+    .signers([wallet]).rpc({ commitment: "confirmed" });
+
+  interface RunResult { run: number; cu: number; solCost: number; error?: string }
+  const results: RunResult[] = [];
+
+  for (let i = 0; i < runs; i++) {
+    console.log(`\n--- Run ${i + 1}/${runs} ---`);
+
+    console.log("Uploading proof...");
+    await uploadProof(
+      program, wallet, connection, proofAndWitness,
+      issuerPda, hookPayloadPda, mintPk, recipientPk,
+    );
+    console.log("Proof finalized.");
+
+    console.log(`${live ? "Executing" : "Simulating"} settle_hook...`);
+
     try {
-      await program.methods.closeHookPayload()
-        .accounts({ authority: wallet.publicKey, issuer: issuerPda, hookPayload: hookPayloadPda })
-        .signers([wallet]).rpc({ commitment: "confirmed" });
-    } catch {}
+      const { cu, logs } = live
+        ? await liveSettle(program, wallet, connection, hookPayloadPda, issuerPda, mintPk, recipientPk, registryPda, merkleTree)
+        : await simulateSettle(program, wallet, connection, hookPayloadPda, issuerPda, mintPk, recipientPk, registryPda, merkleTree);
+
+      const cost = solCostFromCu(cu);
+      results.push({ run: i + 1, cu, solCost: cost });
+      console.log(`  CU: ${cu.toLocaleString()}  |  SOL: ${cost.toFixed(6)}`);
+
+      const probes = logs.filter(l => l.includes("cu-probe"));
+      for (const p of probes) console.log(`  ${p}`);
+
+      if (logs.some(l => l.includes("failed:"))) {
+        const errLog = logs.find(l => l.includes("failed:"));
+        console.log(`  Note: ${errLog?.trim()}`);
+      }
+    } catch (err: any) {
+      console.error(`  Failed: ${err.message?.slice(0, 200)}`);
+      results.push({ run: i + 1, cu: 0, solCost: 0, error: err.message?.slice(0, 200) });
+    }
+
+    if (await exists(connection, hookPayloadPda)) {
+      try {
+        await program.methods.closeHookPayload()
+          .accounts({ authority: wallet.publicKey, hookPayload: hookPayloadPda })
+          .signers([wallet]).rpc({ commitment: "confirmed" });
+      } catch (err: any) {
+        console.warn(`closeHookPayload (cleanup) failed: ${err.message?.slice(0, 120)}`);
+      }
+    }
   }
 
-  // 3. init_hook_payload
-  console.log(`\nInitializing hook payload (${proofAndWitness.length}B)...`);
-  await program.methods
-    .initHookPayload(proofAndWitness.length)
-    .accounts({ authority: wallet.publicKey, issuer: issuerPda, hookPayload: hookPayloadPda, systemProgram: SystemProgram.programId })
-    .signers([wallet]).rpc({ commitment: "confirmed" });
-  console.log("  Done.");
-
-  // 4. write_hook_proof in chunks
-  const CHUNK = 450;
-  const n = Math.ceil(proofAndWitness.length / CHUNK);
-  console.log(`\nUploading proof (${n} chunks)...`);
-  for (let off = 0; off < proofAndWitness.length; off += CHUNK) {
-    const chunk = Buffer.from(proofAndWitness.subarray(off, off + CHUNK));
-    await program.methods
-      .writeHookProof(off, chunk)
-      .accounts({ authority: wallet.publicKey, issuer: issuerPda, hookPayload: hookPayloadPda })
-      .signers([wallet]).rpc({ commitment: "confirmed" });
-    console.log(`  ${Math.floor(off / CHUNK) + 1}/${n}: ${chunk.length}B @ ${off}`);
+  const ok = results.filter(r => r.cu > 0);
+  if (ok.length === 0) {
+    console.log("\nAll runs failed.");
+    process.exit(1);
   }
 
-  // 5. finalize_hook_payload
-  console.log("\nFinalizing payload...");
-  await program.methods
-    .finalizeHookPayload(
-      Array.from(NULLIFIER), mint, new BN(0), recipient, new BN(1000),
-      { bubblegumTail: 0, proofPresent: false, proofBytes: Array(128).fill(0), addressMtIndex: 0, addressQueueIndex: 0, addressRootIndex: 0, outputStateTreeIndex: 0 }
-    )
-    .accounts({ authority: wallet.publicKey, issuer: issuerPda, hookPayload: hookPayloadPda })
-    .signers([wallet]).rpc({ commitment: "confirmed" });
-  console.log("  Done.");
+  const cuVals = ok.map(r => r.cu).sort((a, b) => a - b);
+  const costVals = ok.map(r => r.solCost).sort((a, b) => a - b);
 
-  // 6. Simulate settle_hook
-  console.log("\nSimulating settle_hook (gnark verification)...");
-  const dummyTree = Keypair.generate().publicKey;
-  const [dummyTreeConfig] = PublicKey.findProgramAddressSync([dummyTree.toBuffer()], MPL_BUBBLEGUM_ID);
+  console.log("\n" + "=".repeat(55));
+  console.log("BENCHMARK RESULTS");
+  console.log("=".repeat(55));
+  console.log(`Successful: ${ok.length}/${runs}`);
+  console.log(`\nCompute Units:`);
+  console.log(`  Min:    ${cuVals[0].toLocaleString()}`);
+  console.log(`  Median: ${percentile(cuVals, 50).toLocaleString()}`);
+  console.log(`  Max:    ${cuVals[cuVals.length - 1].toLocaleString()}`);
+  console.log(`  Target: < 250,000`);
+  console.log(`  Status: ${percentile(cuVals, 50) < 250_000 ? "PASS" : "FAIL"}`);
 
-  const ix = await program.methods
-    .settleHook(new BN(1000))
-    .accounts({
-      authority: wallet.publicKey, mint, destinationToken: recipient,
-      hookPayload: hookPayloadPda, leafOwner: recipient, issuer: issuerPda,
-      registry: registryPda, merkleTree: dummyTree, treeConfig: dummyTreeConfig,
-      treeCreator, bubblegumProgram: MPL_BUBBLEGUM_ID,
-      compressionProgram: SPL_ACCOUNT_COMPRESSION_ID, logWrapper: NOOP_PROGRAM_ID,
-      systemProgram: SystemProgram.programId,
-    })
-    .instruction();
+  console.log(`\nSOL Cost (@ ${PRIORITY_FEE_MICRO_LAMPORTS} µlam/CU):`);
+  console.log(`  Min:    ${costVals[0].toFixed(6)} SOL`);
+  console.log(`  Median: ${percentile(costVals, 50).toFixed(6)} SOL`);
+  console.log(`  Max:    ${costVals[costVals.length - 1].toFixed(6)} SOL`);
+  console.log(`  Target: < 0.001 SOL`);
+  console.log(`  Status: ${percentile(costVals, 50) < 0.001 ? "PASS" : "FAIL"}`);
 
-  const bh = (await connection.getLatestBlockhash()).blockhash;
-  const msg = new TransactionMessage({
-    payerKey: wallet.publicKey, recentBlockhash: bh,
-    instructions: [ComputeBudgetProgram.setComputeUnitLimit({ units: 1_400_000 }), ix],
-  }).compileToV0Message();
+  const report = {
+    timestamp: new Date().toISOString(),
+    config: { runs, live, priorityFeeMicroLamports: PRIORITY_FEE_MICRO_LAMPORTS },
+    results: results.map(({ run, cu, solCost, error }) => ({ run, cu, solCost, error })),
+    summary: {
+      cu: { min: cuVals[0], median: percentile(cuVals, 50), max: cuVals[cuVals.length - 1] },
+      solCost: { min: costVals[0], median: percentile(costVals, 50), max: costVals[costVals.length - 1] },
+      cuPass: percentile(cuVals, 50) < 250_000,
+      solPass: percentile(costVals, 50) < 0.001,
+    },
+  };
 
-  const vtx = new VersionedTransaction(msg);
-  vtx.sign([wallet]);
-
-  const sim = await connection.simulateTransaction(vtx, { sigVerify: false });
-
-  console.log(`\n${"=".repeat(50)}`);
-  console.log(`COMPUTE UNITS CONSUMED: ${sim.value.unitsConsumed}`);
-  console.log(`${"=".repeat(50)}`);
-
-  if (sim.value.err) {
-    console.log(`\nError (expected — no bubblegum tree): ${JSON.stringify(sim.value.err)}`);
-  }
-  if (sim.value.logs) {
-    console.log(`\nLogs:`);
-    for (const log of sim.value.logs) console.log(`  ${log}`);
-  }
-
-  // Cleanup
-  console.log("\nCleaning up...");
-  try {
-    await program.methods.closeHookPayload()
-      .accounts({ authority: wallet.publicKey, issuer: issuerPda, hookPayload: hookPayloadPda })
-      .signers([wallet]).rpc({ commitment: "confirmed" });
-    console.log("  Payload closed.");
-  } catch {}
+  const outPath = path.join(__dirname, "..", "..", "docs", "benchmark-cu-results.json");
+  fs.writeFileSync(outPath, JSON.stringify(report, null, 2));
+  console.log(`\nResults → ${outPath}`);
 }
 
 main().catch((err) => { console.error(err); process.exit(1); });

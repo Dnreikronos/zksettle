@@ -6,7 +6,12 @@
     "strict": true,
     "resolveJsonModule": true,
     "outDir": "dist",
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "baseUrl": ".",
+    "paths": {
+      "@solana/web3.js": ["./node_modules/@solana/web3.js"],
+      "@coral-xyz/anchor": ["./node_modules/@coral-xyz/anchor"]
+    }
   },
-  "include": ["*.ts"]
+  "include": ["*.ts", "../lib/*.ts"]
 }
