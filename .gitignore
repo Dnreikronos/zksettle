@@ -16,3 +16,4 @@ backend/tests/fixtures/
 sdk/dist/
 sdk/node_modules/
 sdk/package-lock.json
+video/
