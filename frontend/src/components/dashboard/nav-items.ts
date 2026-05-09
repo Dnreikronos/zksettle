@@ -6,6 +6,7 @@ import {
   DollarCircle,
   Flash,
   Key,
+  Shield,
 } from "iconoir-react";
 import type { FC, SVGProps } from "react";
 
@@ -17,7 +18,7 @@ export interface NavItem {
   icon: FC<SVGProps<SVGSVGElement>>;
   group: NavGroup;
   subtitle: string;
-
+  requiresStablecoinRole?: true;
 }
 
 export interface NavGroupMeta {
@@ -63,6 +64,15 @@ export const NAV_ITEMS: readonly NavItem[] = [
     group: "overview",
     subtitle:
       "Generate a compliance proof and submit it on-chain. End-to-end in under 15 seconds.",
+  },
+  {
+    label: "Admin",
+    href: "/dashboard/admin",
+    icon: Shield,
+    group: "controls",
+    subtitle:
+      "Govern the stablecoin: change operator, transfer admin, manage mint cap, pause, and approve redemptions.",
+    requiresStablecoinRole: true,
   },
   {
     label: "API keys",
