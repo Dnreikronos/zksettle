@@ -19,7 +19,7 @@ import * as path from "path";
 // ---------------------------------------------------------------------------
 
 export const ZKSETTLE_PROGRAM_ID = new PublicKey(
-  "AyZk4CYFAFFJiFC2WqqXY2oq2pgN6vvrWwYbbWz7z7Jo"
+  "2HexcvYg6zvQo6kf1ompmvG78GUKMTW292kp1wDdKzFk"
 );
 export const MPL_BUBBLEGUM_ID = new PublicKey(
   "BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY"

@@ -43,7 +43,7 @@ import * as path from "path";
 import idlJson from "../../sdk/src/idl/zksettle.json";
 
 const ZKSETTLE_PROGRAM_ID = new PublicKey(
-  "AyZk4CYFAFFJiFC2WqqXY2oq2pgN6vvrWwYbbWz7z7Jo"
+  "2HexcvYg6zvQo6kf1ompmvG78GUKMTW292kp1wDdKzFk"
 );
 
 const MPL_BUBBLEGUM_ID = new PublicKey(

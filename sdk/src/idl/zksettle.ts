@@ -5,7 +5,7 @@
  * IDL can be found at `sdk/src/idl/zksettle.json`.
  */
 export type Zksettle = {
-  "address": "AyZk4CYFAFFJiFC2WqqXY2oq2pgN6vvrWwYbbWz7z7Jo",
+  "address": "2HexcvYg6zvQo6kf1ompmvG78GUKMTW292kp1wDdKzFk",
   "metadata": {
     "name": "zksettle",
     "version": "0.1.0",
