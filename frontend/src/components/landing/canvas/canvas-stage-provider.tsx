@@ -17,6 +17,7 @@ import { createScrollState } from "./types";
 
 const DESKTOP_MIN_WIDTH = 768;
 const MIN_LOADING_MS = 2200;
+const MAX_LOADING_MS = 10_000;
 
 function probeWebGL(): boolean {
   try {
@@ -35,6 +36,7 @@ function probeWebGL(): boolean {
 
 export function CanvasStageProvider({ children }: { children: ReactNode }) {
   const reduceMotion = useReducedMotion();
+  const [determined, setDetermined] = useState(false);
   const [enabled, setEnabled] = useState(false);
   const [canvasReady, setCanvasReady] = useState(false);
   const [minTimeElapsed, setMinTimeElapsed] = useState(false);
@@ -43,6 +45,7 @@ export function CanvasStageProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (reduceMotion) {
       setEnabled(false);
+      setDetermined(true);
       return;
     }
     const isMobile = window.matchMedia(
@@ -50,22 +53,31 @@ export function CanvasStageProvider({ children }: { children: ReactNode }) {
     ).matches;
     if (isMobile) {
       setEnabled(false);
+      setDetermined(true);
       return;
     }
     if (!probeWebGL()) {
       setEnabled(false);
+      setDetermined(true);
       return;
     }
     setEnabled(true);
+    setDetermined(true);
     const timer = setTimeout(() => setMinTimeElapsed(true), MIN_LOADING_MS);
     return () => clearTimeout(timer);
   }, [reduceMotion]);
+
+  useEffect(() => {
+    if (!enabled) return;
+    const fallback = setTimeout(() => setCanvasReady(true), MAX_LOADING_MS);
+    return () => clearTimeout(fallback);
+  }, [enabled]);
 
   const onCanvasReady = useCallback(() => setCanvasReady(true), []);
 
   const ready = canvasReady && minTimeElapsed;
 
-  const stageReady = !enabled || ready;
+  const stageReady = determined && (!enabled || ready);
 
   const value = useMemo<CanvasStageValue>(
     () => ({ scrollStateRef, enabled, ready: stageReady, onCanvasReady }),
