@@ -269,6 +269,12 @@ export async function simulateSettle(
 
   const sim = await connection.simulateTransaction(vtx, { sigVerify: false });
 
+  if (sim.value.err) {
+    const err = new Error(`settle_hook simulation failed: ${JSON.stringify(sim.value.err)}`);
+    (err as any).logs = sim.value.logs ?? [];
+    throw err;
+  }
+
   return {
     cu: sim.value.unitsConsumed ?? 0,
     logs: sim.value.logs ?? [],
