@@ -27,7 +27,12 @@ interface FieldRowProps {
   badge?: ReactNode;
 }
 
-function FieldRow({ label, value, copyValue, badge }: FieldRowProps) {
+function FieldRow({
+  label,
+  value,
+  copyValue,
+  badge,
+}: Readonly<FieldRowProps>) {
   const [copied, setCopied] = useState(false);
 
   const onCopy = async () => {
@@ -76,7 +81,7 @@ function youBadge() {
 export function TreasuryOverview({
   treasury,
   walletPublicKey,
-}: TreasuryOverviewProps) {
+}: Readonly<TreasuryOverviewProps>) {
   const decimals = treasury.decimals;
   const circulatingDisplay = formatAmount(circulatingSupply(treasury), decimals);
 

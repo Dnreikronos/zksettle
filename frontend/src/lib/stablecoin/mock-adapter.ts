@@ -28,7 +28,7 @@ function pubkeyFromEnv(value: string | undefined): PublicKey | null {
 function keyFromLabel(label: string): PublicKey {
   const bytes = new Uint8Array(32);
   for (let i = 0; i < label.length && i < 32; i++) {
-    bytes[i] = label.charCodeAt(i) % 256;
+    bytes[i] = (label.codePointAt(i) ?? 0) % 256;
   }
   bytes[31] = 1;
   return new PublicKey(bytes);

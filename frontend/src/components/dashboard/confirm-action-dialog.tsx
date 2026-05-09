@@ -27,7 +27,7 @@ export function ConfirmActionDialog({
   errorMessage = null,
   onConfirm,
   onCancel,
-}: ConfirmActionDialogProps) {
+}: Readonly<ConfirmActionDialogProps>) {
   const titleId = useId();
   const descId = useId();
 

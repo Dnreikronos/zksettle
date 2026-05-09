@@ -30,12 +30,14 @@ let sdkPromise: Promise<SdkModule> | null = null;
 const SDK_SPECIFIER = "@zksettle/sdk";
 
 function loadSdk(): Promise<SdkModule> {
-  if (!sdkPromise) {
-    sdkPromise = import(/* @vite-ignore */ SDK_SPECIFIER) as Promise<SdkModule>;
-  }
+  sdkPromise ??= import(/* @vite-ignore */ SDK_SPECIFIER) as Promise<SdkModule>;
   return sdkPromise;
 }
 
+// Byte offset of the `treasury` field inside an Anchor RedemptionRequest:
+//   8  (Anchor account discriminator)
+// + 32 (`holder` Pubkey)
+// = 40
 const REDEMPTION_TREASURY_OFFSET = 8 + 32;
 
 function toLocalTreasury(sdk: SdkTreasury): Treasury {
