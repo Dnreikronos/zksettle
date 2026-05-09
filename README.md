@@ -14,6 +14,7 @@ ZKSettle is a compliance API that lets fintechs prove regulatory conformance (tr
 - [The solution](#the-solution)
 - [Architecture](#architecture)
 - [Technology stack](#technology-stack)
+- [Performance](#performance)
 - [Repository layout](#repository-layout)
 - [Getting started](#getting-started)
 - [Documentation](#documentation)
@@ -185,6 +186,24 @@ sequenceDiagram
 
 ---
 
+## Performance
+
+Real benchmarks measured on Intel i7-11390H (4C/8T, 16 GB RAM). Full methodology and reproduction steps in [`docs/benchmarks.md`](./docs/benchmarks.md).
+
+| Metric | Measured | PRD target | Status |
+|--------|----------|------------|--------|
+| Groth16 proof generation (native) | **406 ms** median | < 10 s | Passing |
+| Circuit constraints (BN254) | 19,559 | — | — |
+| Proof size | 388 bytes | 256 bytes (Groth16 constant) | See note¹ |
+| On-chain verification CU | est. 219K (ADR-022) | < 250K | On track (estimated) |
+| SOL cost per verification | est. 0.000006 SOL | < 0.001 | On track (estimated) |
+| E2E latency (proof + verify + settle) | est. 5–7 s | < 15 s | On track (estimated) |
+| Browser proof generation (WASM) | est. 1.2 s | < 10 s | On track (estimated) |
+
+¹ The 388-byte proof includes the Sunspot serialization envelope (proof point coordinates + metadata). The raw Groth16 proof points are 256 bytes; the additional 132 bytes are the public witness encoding. On-chain, the proof and witness are submitted separately.
+
+---
+
 ## Repository layout
 
 All Rust code lives inside `backend/` as a single Cargo workspace. The frontend, SDK, and circuits stay at the root so they have independent toolchains and CI pipelines.
@@ -304,6 +323,7 @@ pnpm --filter e2e test                    # End-to-end (Playwright)
 | [`zksettle_prd.md`](./zksettle_prd.md) | Product Requirements Document — vision, users, use cases, requirements, MVP scope, metrics, 5-week plan |
 | [`zksettle_adr.md`](./zksettle_adr.md) | Architecture Decision Records — eight accepted decisions (ADR-001 through ADR-008) plus proposed enhancements (ADR-009 through ADR-018) and three decided/implemented records (ADR-019 through ADR-022) |
 | [`zksettle_pitch.md`](./zksettle_pitch.md) | Hackathon pitch narrative |
+| [`docs/benchmarks.md`](./docs/benchmarks.md) | Performance benchmarks — proof generation timing, circuit metrics, CU measurement, stress test results |
 
 ---
 
