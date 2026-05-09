@@ -199,22 +199,9 @@ async function runStepSubmit(
 ): Promise<string | undefined> {
   dispatch({ type: "STEP_RUNNING", step: 4 });
 
-  const MAX_SOLANA_IX_BYTES = 740;
-  if (proofResult.proof.length > MAX_SOLANA_IX_BYTES) {
-    dispatch({
-      type: "STEP_SUCCESS",
-      step: 4,
-      data: {
-        skipped: true,
-        reason: `Proof is ${proofResult.proof.length} bytes — exceeds Solana transaction limit. On-chain submission requires proof compression (future work).`,
-      },
-    });
-    return undefined;
-  }
-
   const start = performance.now();
-  const [{ wrap }, { BN }] = await Promise.all([
-    import("@zksettle/sdk/wrap"),
+  const [{ uploadProofChunked }, { BN }] = await Promise.all([
+    import("@zksettle/sdk"),
     import("@coral-xyz/anchor"),
   ]);
 
@@ -224,26 +211,29 @@ async function runStepSubmit(
     cleanHex.match(/.{1,2}/g)?.map((b) => Number.parseInt(b, 16)) ?? [],
   );
 
-  const tx = await wrap({
-    connection,
-    wallet: publicKey,
-    proof: proofResult.proof,
-    nullifierHash: nullifierBytes,
-    transferContext: {
-      mint: publicKey,
-      recipient: publicKey,
-      amount: new BN(1000),
-      epoch: Math.floor(Date.now() / 1000 / 86400),
-      privateKey: submitCtx.zkPrivateKey,
-      credentialExpiry: submitCtx.credentialExpiry,
-      jurisdictionPath: submitCtx.jurisdictionProof.path.map((h) =>
-        h.startsWith("0x") ? h : `0x${h}`,
-      ),
-      jurisdictionPathIndices: submitCtx.jurisdictionProof.path_indices,
+  const result = await uploadProofChunked(
+    {
+      connection,
+      wallet: publicKey,
+      proof: proofResult.proof,
+      nullifierHash: nullifierBytes,
+      transferContext: {
+        mint: publicKey,
+        recipient: publicKey,
+        amount: new BN(1000),
+        epoch: Math.floor(Date.now() / 1000 / 86400),
+        privateKey: submitCtx.zkPrivateKey,
+        credentialExpiry: submitCtx.credentialExpiry,
+        jurisdictionPath: submitCtx.jurisdictionProof.path.map((h) =>
+          h.startsWith("0x") ? h : `0x${h}`,
+        ),
+        jurisdictionPathIndices: submitCtx.jurisdictionProof.path_indices,
+      },
     },
-  });
+    (tx) => sendTransaction(tx, connection),
+  );
 
-  const signature = await sendTransaction(tx, connection);
+  const signature = result.finalizeSignature;
   dispatch({ type: "SET_TX", signature });
   dispatch({
     type: "STEP_SUCCESS",
@@ -278,16 +268,19 @@ function stepError(dispatch: Dispatch<FlowAction>, step: number, err: unknown, f
   return msg;
 }
 
-async function runLiveFlow(
-  dispatch: Dispatch<FlowAction>,
-  walletHex: string,
-  publicKey: PublicKey,
-  connection: Connection,
-  sendTransaction: (tx: Transaction, conn: Connection) => Promise<string>,
-  generate: (inputs: ProofInputs) => Promise<ProofResult>,
-  ensureApi: () => Promise<import("@aztec/bb.js").Barretenberg>,
-  derivePrivateKey: () => Promise<string>,
-): Promise<void> {
+interface LiveFlowContext {
+  dispatch: Dispatch<FlowAction>;
+  walletHex: string;
+  publicKey: PublicKey;
+  connection: Connection;
+  sendTransaction: (tx: Transaction, conn: Connection) => Promise<string>;
+  generate: (inputs: ProofInputs) => Promise<ProofResult>;
+  ensureApi: () => Promise<import("@aztec/bb.js").Barretenberg>;
+  derivePrivateKey: () => Promise<string>;
+}
+
+async function runLiveFlow(ctx: LiveFlowContext): Promise<void> {
+  const { dispatch, walletHex, publicKey, connection, sendTransaction, generate, ensureApi, derivePrivateKey } = ctx;
   let credential;
   try { credential = await runStepCredential(dispatch, walletHex); }
   catch (err) {
@@ -365,7 +358,7 @@ export function useProveFlow(): UseProveFlowReturn {
         return;
       }
 
-      await runLiveFlow(dispatch, walletHex, publicKey, connection, sendTransaction, generate, ensureApi, derivePrivateKey);
+      await runLiveFlow({ dispatch, walletHex, publicKey, connection, sendTransaction, generate, ensureApi, derivePrivateKey });
     },
     [connected, publicKey, walletHex, connection, sendTransaction, generate, ensureApi, derivePrivateKey],
   );

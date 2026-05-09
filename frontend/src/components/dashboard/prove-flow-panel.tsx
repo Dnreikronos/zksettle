@@ -104,9 +104,9 @@ function CredentialSuccess({ data }: Readonly<{ data: unknown }>): ReactNode {
 }
 
 function SubmitSuccess({ data, mode }: Readonly<{ data: unknown; mode: string }>): ReactNode {
-  const d = data as { signature?: string; skipped?: boolean; reason?: string } | undefined;
+  const d = data as { signature?: string; skipped?: boolean } | undefined;
   if (mode === "demo" || d?.skipped) {
-    return <Badge variant="default"><Sparks className="size-3" strokeWidth={1.5} aria-hidden="true" />{d?.reason ?? "Skipped in demo"}</Badge>;
+    return <Badge variant="default"><Sparks className="size-3" strokeWidth={1.5} aria-hidden="true" />Skipped in demo</Badge>;
   }
   if (d?.signature) {
     return (
