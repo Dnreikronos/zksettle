@@ -7,7 +7,7 @@ import { ScrollTrigger } from "gsap/ScrollTrigger";
 
 import { useReducedMotion } from "@/hooks/use-reduced-motion";
 
-if (typeof globalThis.window !== "undefined") {
+if (globalThis.window !== undefined) {
   gsap.registerPlugin(ScrollTrigger);
 }
 

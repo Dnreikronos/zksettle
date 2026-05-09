@@ -15,7 +15,7 @@ import { useCanvasStage } from "@/components/landing/canvas/use-canvas-stage";
 
 import { useActPin } from "./use-act-pin";
 
-if (typeof globalThis.window !== "undefined") {
+if (globalThis.window !== undefined) {
   gsap.registerPlugin(ScrollTrigger, useGSAP);
 }
 

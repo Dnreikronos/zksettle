@@ -6,7 +6,7 @@ import { gsap } from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
 import { useCanvasStage } from "@/components/landing/canvas/use-canvas-stage";
 
-if (typeof globalThis.window !== "undefined") {
+if (globalThis.window !== undefined) {
   gsap.registerPlugin(ScrollTrigger, useGSAP);
 }
 
