@@ -39,7 +39,7 @@ export class StablecoinClient {
   async fetchTreasury(): Promise<Treasury> {
     const info = await this.connection.getAccountInfo(this.treasuryAddress);
     if (!info) throw new Error("Treasury account not found");
-    return decodeTreasury(info.data as Buffer);
+    return decodeTreasury(info.data);
   }
 
   async fetchRedemptionRequest(
@@ -49,7 +49,7 @@ export class StablecoinClient {
     const [address] = findRedemptionPda(this.treasuryAddress, holder, nonce, this.programId);
     const info = await this.connection.getAccountInfo(address);
     if (!info) return null;
-    return decodeRedemptionRequest(info.data as Buffer);
+    return decodeRedemptionRequest(info.data);
   }
 
   async getTokenBalance(owner: PublicKey): Promise<bigint> {
