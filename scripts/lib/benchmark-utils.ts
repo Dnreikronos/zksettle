@@ -101,6 +101,9 @@ export async function exists(c: Connection, pk: PublicKey): Promise<boolean> {
 }
 
 export function loadWallet(): Keypair {
+  if (process.env.ISSUER_KEYPAIR) {
+    return Keypair.fromSecretKey(Uint8Array.from(JSON.parse(process.env.ISSUER_KEYPAIR)));
+  }
   const p = process.env.ANCHOR_WALLET || path.join(os.homedir(), ".config/solana/id.json");
   return Keypair.fromSecretKey(Uint8Array.from(JSON.parse(fs.readFileSync(p, "utf-8"))));
 }
