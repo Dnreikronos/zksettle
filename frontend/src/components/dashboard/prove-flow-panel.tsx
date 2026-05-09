@@ -11,6 +11,7 @@ import {
   Sparks,
 } from "iconoir-react";
 import { AnimatePresence, motion } from "motion/react";
+import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -51,6 +52,7 @@ function CopyButton({ text, label }: Readonly<{ text: string; label: string }>) 
     try {
       await navigator.clipboard.writeText(text);
       setCopied(true);
+      toast.success("Copied to clipboard");
       setTimeout(() => setCopied(false), 1500);
     } catch {
       /* noop */
