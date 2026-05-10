@@ -11,7 +11,7 @@ export interface StatCardProps {
   isLoading?: boolean;
 }
 
-export function StatCard({ label, value, sub, className, isLoading }: StatCardProps) {
+export function StatCard({ label, value, sub, className, isLoading }: Readonly<StatCardProps>) {
   return (
     <article
       className={cn(

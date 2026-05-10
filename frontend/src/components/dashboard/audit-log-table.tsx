@@ -143,6 +143,21 @@ export function AuditLogTable() {
     exportToJson(events, "zksettle-audit-log.json");
   };
 
+  let statusText: string;
+  if (isLoading) {
+    statusText = "Loading…";
+  } else if (isError) {
+    statusText = "Unavailable";
+  } else {
+    const plural = events.length === 1 ? "" : "s";
+    statusText = `${fmtCompact(events.length)} event${plural} loaded`;
+  }
+
+  const paginationText =
+    events.length > 0
+      ? `Showing ${fmtCompact(events.length)} event${events.length === 1 ? "" : "s"}`
+      : "";
+
   return (
     <div className="flex flex-col gap-6">
       {/* Filters */}
@@ -222,11 +237,7 @@ export function AuditLogTable() {
         </div>
 
         <div className="font-mono text-xs text-muted">
-          {isLoading
-            ? "Loading…"
-            : isError
-              ? "Unavailable"
-              : `${fmtCompact(events.length)} event${events.length === 1 ? "" : "s"} loaded`}
+          {statusText}
         </div>
       </div>
 
@@ -301,11 +312,7 @@ export function AuditLogTable() {
 
       {/* Pagination */}
       <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border-subtle pt-4 font-mono text-xs text-muted">
-        <span>
-          {events.length > 0
-            ? `Showing ${fmtCompact(events.length)} event${events.length === 1 ? "" : "s"}`
-            : ""}
-        </span>
+        <span>{paginationText}</span>
         {hasNextPage && (
           <Button
             variant="ghost"

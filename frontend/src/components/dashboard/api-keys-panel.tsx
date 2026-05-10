@@ -248,7 +248,7 @@ export function ApiKeysPanel() {
           recognise it later.
         </p>
 
-        {isLoading ? (
+        {isLoading && (
           <div className="mt-4">
             <Table>
               <TableHeader>
@@ -263,14 +263,18 @@ export function ApiKeysPanel() {
               <TableSkeleton columns={5} rows={3} />
             </Table>
           </div>
-        ) : !isError && keys.length === 0 ? (
+        )}
+
+        {!isLoading && !isError && keys.length === 0 && (
           <EmptyState
             icon={Key}
             title="No keys yet"
             description="Create one above to get started."
             className="mt-4"
           />
-        ) : keys.length > 0 ? (
+        )}
+
+        {!isLoading && keys.length > 0 && (
           <div className="mt-4">
             <Table>
               <TableHeader>
@@ -324,7 +328,7 @@ export function ApiKeysPanel() {
               </TableBody>
             </Table>
           </div>
-        ) : null}
+        )}
       </section>
 
       <Dialog

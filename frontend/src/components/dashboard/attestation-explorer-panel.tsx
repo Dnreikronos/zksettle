@@ -177,15 +177,50 @@ export function AttestationExplorerPanel() {
         />
       ) : null}
 
-      {/* Loading skeletons */}
-      {activeWallet && status === "loading" ? (
-        <>
-          <ProofCardSkeleton title="Membership proof" />
-          <ProofCardSkeleton title="Sanctions proof" />
-        </>
-      ) : null}
+      <ProofResultsSection
+        activeWallet={activeWallet}
+        status={status}
+        membershipQuery={membershipQuery}
+        sanctionsQuery={sanctionsQuery}
+      />
 
-      {/* Membership proof */}
+      <RecentWalletsSection
+        recent={recent}
+        onPick={pickRecent}
+        onForget={forgetWallet}
+      />
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Sub-components                                                     */
+/* ------------------------------------------------------------------ */
+
+function ProofResultsSection({
+  activeWallet,
+  status,
+  membershipQuery,
+  sanctionsQuery,
+}: Readonly<{
+  activeWallet: string | null;
+  status: ComplianceStatus | null;
+  membershipQuery: ReturnType<typeof useMembershipProof>;
+  sanctionsQuery: ReturnType<typeof useSanctionsProof>;
+}>) {
+  if (!activeWallet) return null;
+
+  if (status === "loading") {
+    return (
+      <>
+        <ProofCardSkeleton title="Membership proof" />
+        <ProofCardSkeleton title="Sanctions proof" />
+      </>
+    );
+  }
+
+  return (
+    <>
       {membershipQuery.data ? (
         <ProofCard
           id="membership"
@@ -201,11 +236,10 @@ export function AttestationExplorerPanel() {
         />
       ) : null}
 
-      {activeWallet && membershipQuery.data && sanctionsQuery.data ? (
+      {membershipQuery.data && sanctionsQuery.data ? (
         <Separator className="bg-border-subtle" />
       ) : null}
 
-      {/* Sanctions proof */}
       {sanctionsQuery.data ? (
         <ProofCard
           id="sanctions"
@@ -226,19 +260,9 @@ export function AttestationExplorerPanel() {
           }
         />
       ) : null}
-
-      <RecentWalletsSection
-        recent={recent}
-        onPick={pickRecent}
-        onForget={forgetWallet}
-      />
-    </div>
+    </>
   );
 }
-
-/* ------------------------------------------------------------------ */
-/*  Sub-components                                                     */
-/* ------------------------------------------------------------------ */
 
 function ProofCardSkeleton({ title }: Readonly<{ title: string }>) {
   return (

@@ -492,8 +492,8 @@ function RevokeConfirmDialog({
 function CredentialSkeleton() {
   return (
     <div className="grid gap-y-3 sm:grid-cols-[140px_1fr]">
-      {Array.from({ length: 5 }).map((_, i) => (
-        <div key={i} className="contents">
+      {(["issuer", "wallet", "status", "issued", "expires"] as const).map((field) => (
+        <div key={field} className="contents">
           <Skeleton className="h-4 w-20" />
           <Skeleton className="h-4 w-48" />
         </div>

@@ -369,17 +369,30 @@ interface LiveFlowContext {
   transferParams: TransferParams;
 }
 
+function handleCredentialError(dispatch: Dispatch<FlowAction>, err: unknown): void {
+  const msg = stepError(dispatch, 1, err, "Failed to fetch credential");
+  if (msg.includes("404")) {
+    dispatch({ type: "STEP_ERROR", step: 1, error: "No credential found for this wallet. Issue one from the Wallets & Credentials page, or try demo mode." });
+  }
+}
+
+function handleSubmitError(dispatch: Dispatch<FlowAction>, err: unknown): void {
+  console.error("[zksettle] Submit step error:", err);
+  const errRecord = err as Record<string, unknown>;
+  const inner = errRecord?.error;
+  if (inner) console.error("[zksettle] Inner error:", inner);
+  const logs = (errRecord?.logs ?? (inner as Record<string, unknown>)?.logs) as string[] | undefined;
+  if (logs) console.error("[zksettle] Transaction logs:", logs);
+  const message = err instanceof Error ? err.message : "Transaction failed";
+  const isRejected = message.includes("rejected") || message.includes("User rejected");
+  dispatch({ type: "STEP_ERROR", step: 4, error: isRejected ? "Transaction rejected by wallet." : message });
+}
+
 async function runLiveFlow(ctx: LiveFlowContext): Promise<void> {
   const { dispatch, walletHex, publicKey, connection, signAllTransactions, generate, ensureApi, derivePrivateKey, transferParams } = ctx;
   let credential;
   try { credential = await runStepCredential(dispatch, walletHex); }
-  catch (err) {
-    const msg = stepError(dispatch, 1, err, "Failed to fetch credential");
-    if (msg.includes("404")) {
-      dispatch({ type: "STEP_ERROR", step: 1, error: "No credential found for this wallet. Issue one from the Wallets & Credentials page, or try demo mode." });
-    }
-    return;
-  }
+  catch (err) { handleCredentialError(dispatch, err); return; }
 
   let paths;
   try { paths = await runStepMerklePaths(dispatch, walletHex, derivePrivateKey); }
@@ -393,15 +406,7 @@ async function runLiveFlow(ctx: LiveFlowContext): Promise<void> {
   try {
     txSignature = await runStepSubmit(dispatch, step3Result.proofResult, publicKey, connection, signAllTransactions, { ...step3Result, roots: paths.roots }, transferParams);
   } catch (err) {
-    console.error("[zksettle] Submit step error:", err);
-    const errRecord = err as Record<string, unknown>;
-    const inner = errRecord?.error;
-    if (inner) console.error("[zksettle] Inner error:", inner);
-    const logs = (errRecord?.logs ?? (inner as Record<string, unknown>)?.logs) as string[] | undefined;
-    if (logs) console.error("[zksettle] Transaction logs:", logs);
-    const message = err instanceof Error ? err.message : "Transaction failed";
-    const isRejected = message.includes("rejected") || message.includes("User rejected");
-    dispatch({ type: "STEP_ERROR", step: 4, error: isRejected ? "Transaction rejected by wallet." : message });
+    handleSubmitError(dispatch, err);
     return;
   }
 

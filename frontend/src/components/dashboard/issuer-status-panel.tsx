@@ -179,13 +179,29 @@ export function IssuerStatusPanel() {
           </div>
         </CardHeader>
         <CardContent>
-          {!isError ? (
+          {isError ? null : (
             <ul
               aria-labelledby="roots-heading"
               className="flex flex-col divide-y divide-border-subtle"
             >
               {ROOT_FIELDS.map((field) => {
                 const value = roots?.[field.key];
+                let rootDisplay: React.ReactNode;
+                if (isLoading) {
+                  rootDisplay = <Skeleton className="h-5 w-40" />;
+                } else if (value) {
+                  rootDisplay = (
+                    <TruncatedHash
+                      value={value}
+                      head={10}
+                      tail={8}
+                      className="text-xs text-quill"
+                      copyable
+                    />
+                  );
+                } else {
+                  rootDisplay = <span className="font-mono text-xs text-muted">—</span>;
+                }
                 return (
                   <li
                     key={field.key}
@@ -196,19 +212,7 @@ export function IssuerStatusPanel() {
                       <span className="text-xs text-stone">{field.description}</span>
                     </div>
                     <div className="flex items-center gap-2">
-                      {isLoading ? (
-                        <Skeleton className="h-5 w-40" />
-                      ) : value ? (
-                        <TruncatedHash
-                          value={value}
-                          head={10}
-                          tail={8}
-                          className="text-xs text-quill"
-                          copyable
-                        />
-                      ) : (
-                        <span className="font-mono text-xs text-muted">—</span>
-                      )}
+                      {rootDisplay}
                       {/* Keep the manual copy button for users who prefer an explicit action */}
                       <Button
                         variant="ghost"
@@ -226,7 +230,7 @@ export function IssuerStatusPanel() {
                 );
               })}
             </ul>
-          ) : null}
+          )}
         </CardContent>
       </Card>
 

@@ -100,16 +100,11 @@ export function BillingCards() {
               {monthlyLimit > 0 ? `${usagePct}% of ${fmtCompact(monthlyLimit)}` : "—"}
             </span>
           </div>
-          <div className="h-2 w-full overflow-hidden rounded-full bg-border-subtle">
-            <div
-              className="h-full rounded-full bg-forest transition-[width] duration-500 ease-[var(--ease-brand)]"
-              style={{ width: `${usagePct}%` }}
-              role="progressbar"
-              aria-valuenow={usagePct}
-              aria-valuemin={0}
-              aria-valuemax={100}
-            />
-          </div>
+          <progress
+            className="h-2 w-full overflow-hidden rounded-full [&]:appearance-none [&::-webkit-progress-bar]:rounded-full [&::-webkit-progress-bar]:bg-border-subtle [&::-webkit-progress-value]:rounded-full [&::-webkit-progress-value]:bg-forest [&::-webkit-progress-value]:transition-[width] [&::-webkit-progress-value]:duration-500 [&::-webkit-progress-value]:ease-[var(--ease-brand)] [&::-moz-progress-bar]:rounded-full [&::-moz-progress-bar]:bg-forest"
+            value={usagePct}
+            max={100}
+          />
         </div>
       </section>
 

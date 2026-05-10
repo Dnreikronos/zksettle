@@ -30,7 +30,7 @@ export function TruncatedHash({
   tail = 4,
   className,
   copyable = true,
-}: TruncatedHashProps) {
+}: Readonly<TruncatedHashProps>) {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = async () => {
