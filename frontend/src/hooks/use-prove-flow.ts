@@ -258,7 +258,7 @@ async function runStepSubmit(
     tx.feePayer = publicKey;
     tx.recentBlockhash = (await connection.getLatestBlockhash("confirmed")).blockhash;
     const [signed] = await signAllTransactions([tx]);
-    await sendSigned(signed);
+    await sendSigned(signed!);
   }
 
   const stalePayload = await checkHookPayloadExists(publicKey, connection);
@@ -268,7 +268,7 @@ async function runStepSubmit(
     tx.feePayer = publicKey;
     tx.recentBlockhash = (await connection.getLatestBlockhash("confirmed")).blockhash;
     const [signed] = await signAllTransactions([tx]);
-    await sendSigned(signed);
+    await sendSigned(signed!);
   }
 
   // ── Build ALL proof upload transactions upfront ──
@@ -319,7 +319,7 @@ async function runStepSubmit(
   // ── Send sequentially with confirmation between each ──
   let finalSig = "";
   for (let i = 0; i < signedTxs.length; i++) {
-    const sig = await sendSigned(signedTxs[i]);
+    const sig = await sendSigned(signedTxs[i]!);
     if (i === signedTxs.length - 1) finalSig = sig;
   }
 
@@ -394,9 +394,10 @@ async function runLiveFlow(ctx: LiveFlowContext): Promise<void> {
     txSignature = await runStepSubmit(dispatch, step3Result.proofResult, publicKey, connection, signAllTransactions, { ...step3Result, roots: paths.roots }, transferParams);
   } catch (err) {
     console.error("[zksettle] Submit step error:", err);
-    const inner = (err as any)?.error;
+    const errRecord = err as Record<string, unknown>;
+    const inner = errRecord?.error;
     if (inner) console.error("[zksettle] Inner error:", inner);
-    const logs = (err as any)?.logs ?? (inner as any)?.logs;
+    const logs = (errRecord?.logs ?? (inner as Record<string, unknown>)?.logs) as string[] | undefined;
     if (logs) console.error("[zksettle] Transaction logs:", logs);
     const message = err instanceof Error ? err.message : "Transaction failed";
     const isRejected = message.includes("rejected") || message.includes("User rejected");
