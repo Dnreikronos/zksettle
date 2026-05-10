@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useReducer, type Dispatch } from "react";
+import { useCallback, useReducer, useRef, type Dispatch } from "react";
 import type { Connection, PublicKey, Transaction } from "@solana/web3.js";
 
 import { useWallet, useConnection } from "@/hooks/use-wallet-connection";
@@ -204,7 +204,7 @@ async function runStepSubmit(
   proofResult: ProofResult,
   publicKey: PublicKey,
   connection: Connection,
-  sendTransaction: (tx: Transaction, conn: Connection) => Promise<string>,
+  signAllTransactions: (txs: Transaction[]) => Promise<Transaction[]>,
   submitCtx: {
     zkPrivateKey: string;
     credentialExpiry: string;
@@ -221,7 +221,12 @@ async function runStepSubmit(
     import("@coral-xyz/anchor"),
     import("@solana/web3.js"),
   ]);
-  const { uploadProofChunked, checkIssuerExists, buildRegisterIssuerIx, checkHookPayloadExists, buildCloseHookPayloadIx } = sdk;
+  const {
+    checkIssuerExists, buildRegisterIssuerIx,
+    checkHookPayloadExists, buildCloseHookPayloadIx,
+    buildInitHookPayloadIx, buildWriteChunkIx, buildFinalizeHookPayloadIx,
+    CHUNK_SIZE,
+  } = sdk;
 
   const hexToBytes = (hex: string): Uint8Array => {
     const clean = hex.startsWith("0x") ? hex.slice(2) : hex;
@@ -229,70 +234,103 @@ async function runStepSubmit(
   };
 
   const confirmTx = async (sig: string) => {
-    const bh = await connection.getLatestBlockhash("confirmed");
-    await connection.confirmTransaction({ signature: sig, ...bh }, "confirmed");
+    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
+    await connection.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, "confirmed");
   };
 
+  const sendSigned = async (signed: Transaction) => {
+    const sig = await connection.sendRawTransaction(signed.serialize(), { skipPreflight: true });
+    await confirmTx(sig);
+    return sig;
+  };
+
+  // ── Pre-requisites (issuer registration, stale cleanup) ──
+  // These need separate signing since they must complete before the proof upload.
   const issuerExists = await checkIssuerExists(publicKey, connection);
   if (!issuerExists) {
     const roots = submitCtx.roots;
-    const ix = await buildRegisterIssuerIx(
-      publicKey,
-      {
-        merkleRoot: hexToBytes(roots.membership_root),
-        sanctionsRoot: hexToBytes(roots.sanctions_root),
-        jurisdictionRoot: hexToBytes(roots.jurisdiction_root),
-      },
-      connection,
-    );
-    const sig = await sendTransaction(new Transaction().add(ix), connection);
-    await confirmTx(sig);
+    const ix = await buildRegisterIssuerIx(publicKey, {
+      merkleRoot: hexToBytes(roots.membership_root),
+      sanctionsRoot: hexToBytes(roots.sanctions_root),
+      jurisdictionRoot: hexToBytes(roots.jurisdiction_root),
+    }, connection);
+    const tx = new Transaction().add(ix);
+    tx.feePayer = publicKey;
+    tx.recentBlockhash = (await connection.getLatestBlockhash("confirmed")).blockhash;
+    const [signed] = await signAllTransactions([tx]);
+    await sendSigned(signed);
   }
 
   const stalePayload = await checkHookPayloadExists(publicKey, connection);
   if (stalePayload) {
-    const closeIx = await buildCloseHookPayloadIx(publicKey, connection);
-    const sig = await sendTransaction(new Transaction().add(closeIx), connection);
-    await confirmTx(sig);
+    const ix = await buildCloseHookPayloadIx(publicKey, connection);
+    const tx = new Transaction().add(ix);
+    tx.feePayer = publicKey;
+    tx.recentBlockhash = (await connection.getLatestBlockhash("confirmed")).blockhash;
+    const [signed] = await signAllTransactions([tx]);
+    await sendSigned(signed);
   }
 
-  const nullifierHex = proofResult.publicInputs[1] ?? "";
-  const nullifierBytes = hexToBytes(nullifierHex);
-
+  // ── Build ALL proof upload transactions upfront ──
+  const proofBytes = proofResult.proof;
+  const nullifierBytes = hexToBytes(proofResult.publicInputs[1] ?? "");
   const mintPubkey = new SolPublicKey(transferParams.mint);
   const recipientPubkey = new SolPublicKey(transferParams.recipient);
+  const chunkSize = CHUNK_SIZE;
+  const writesPerTx = 2;
 
-  const result = await uploadProofChunked(
-    {
-      connection,
-      wallet: publicKey,
-      proof: proofResult.proof,
-      nullifierHash: nullifierBytes,
-      transferContext: {
-        mint: mintPubkey,
-        recipient: recipientPubkey,
-        amount: new BN(transferParams.amount),
-        epoch: Math.floor(Date.now() / 1000 / 86400),
-        privateKey: submitCtx.zkPrivateKey,
-        credentialExpiry: submitCtx.credentialExpiry,
-        jurisdictionPath: submitCtx.jurisdictionProof.path.map((h) =>
-          h.startsWith("0x") ? h : `0x${h}`,
-        ),
-        jurisdictionPathIndices: submitCtx.jurisdictionProof.path_indices,
-      },
-    },
-    (tx) => sendTransaction(tx, connection),
-  );
+  const initIx = await buildInitHookPayloadIx(publicKey, proofBytes.length, connection);
 
-  const signature = result.finalizeSignature;
-  dispatch({ type: "SET_TX", signature });
+  const writeIxs = [];
+  for (let offset = 0; offset < proofBytes.length; offset += chunkSize) {
+    const chunk = proofBytes.slice(offset, Math.min(offset + chunkSize, proofBytes.length));
+    writeIxs.push(await buildWriteChunkIx(publicKey, offset, chunk, connection));
+  }
+
+  const epoch = Math.floor(Date.now() / 1000 / 86400);
+  const finalizeIx = await buildFinalizeHookPayloadIx(publicKey, {
+    nullifierHash: nullifierBytes,
+    mint: mintPubkey,
+    epoch,
+    recipient: recipientPubkey,
+    amount: new BN(transferParams.amount),
+  }, connection);
+
+  // Assemble transactions
+  const txs: Transaction[] = [];
+  txs.push(new Transaction().add(initIx));
+  for (let i = 0; i < writeIxs.length; i += writesPerTx) {
+    const tx = new Transaction();
+    for (const ix of writeIxs.slice(i, i + writesPerTx)) tx.add(ix);
+    txs.push(tx);
+  }
+  txs.push(new Transaction().add(finalizeIx));
+
+  // Set feePayer and recentBlockhash on all
+  const { blockhash } = await connection.getLatestBlockhash("confirmed");
+  for (const tx of txs) {
+    tx.feePayer = publicKey;
+    tx.recentBlockhash = blockhash;
+  }
+
+  // ── Single Phantom popup: sign ALL transactions at once ──
+  const signedTxs = await signAllTransactions(txs);
+
+  // ── Send sequentially with confirmation between each ──
+  let finalSig = "";
+  for (let i = 0; i < signedTxs.length; i++) {
+    const sig = await sendSigned(signedTxs[i]);
+    if (i === signedTxs.length - 1) finalSig = sig;
+  }
+
+  dispatch({ type: "SET_TX", signature: finalSig });
   dispatch({
     type: "STEP_SUCCESS",
     step: 4,
-    data: { signature },
+    data: { signature: finalSig },
     durationMs: performance.now() - start,
   });
-  return signature;
+  return finalSig;
 }
 
 async function runStepConfirm(
@@ -324,7 +362,7 @@ interface LiveFlowContext {
   walletHex: string;
   publicKey: PublicKey;
   connection: Connection;
-  sendTransaction: (tx: Transaction, conn: Connection) => Promise<string>;
+  signAllTransactions: (txs: Transaction[]) => Promise<Transaction[]>;
   generate: (inputs: ProofInputs) => Promise<ProofResult>;
   ensureApi: () => Promise<import("@aztec/bb.js").Barretenberg>;
   derivePrivateKey: () => Promise<string>;
@@ -332,7 +370,7 @@ interface LiveFlowContext {
 }
 
 async function runLiveFlow(ctx: LiveFlowContext): Promise<void> {
-  const { dispatch, walletHex, publicKey, connection, sendTransaction, generate, ensureApi, derivePrivateKey, transferParams } = ctx;
+  const { dispatch, walletHex, publicKey, connection, signAllTransactions, generate, ensureApi, derivePrivateKey, transferParams } = ctx;
   let credential;
   try { credential = await runStepCredential(dispatch, walletHex); }
   catch (err) {
@@ -353,8 +391,13 @@ async function runLiveFlow(ctx: LiveFlowContext): Promise<void> {
 
   let txSignature: string | undefined;
   try {
-    txSignature = await runStepSubmit(dispatch, step3Result.proofResult, publicKey, connection, sendTransaction, { ...step3Result, roots: paths.roots }, transferParams);
+    txSignature = await runStepSubmit(dispatch, step3Result.proofResult, publicKey, connection, signAllTransactions, { ...step3Result, roots: paths.roots }, transferParams);
   } catch (err) {
+    console.error("[zksettle] Submit step error:", err);
+    const inner = (err as any)?.error;
+    if (inner) console.error("[zksettle] Inner error:", inner);
+    const logs = (err as any)?.logs ?? (inner as any)?.logs;
+    if (logs) console.error("[zksettle] Transaction logs:", logs);
     const message = err instanceof Error ? err.message : "Transaction failed";
     const isRejected = message.includes("rejected") || message.includes("User rejected");
     dispatch({ type: "STEP_ERROR", step: 4, error: isRejected ? "Transaction rejected by wallet." : message });
@@ -372,7 +415,7 @@ async function runLiveFlow(ctx: LiveFlowContext): Promise<void> {
 
 export function useProveFlow(): UseProveFlowReturn {
   const [state, dispatch] = useReducer(flowReducer, INITIAL_STATE);
-  const { connected, publicKey, sendTransaction } = useWallet();
+  const { connected, publicKey, signAllTransactions } = useWallet();
   const { connection } = useConnection();
 
   const walletHex = publicKey
@@ -382,6 +425,7 @@ export function useProveFlow(): UseProveFlowReturn {
   const { generate, ensureApi } = useProofGeneration();
   const { derivePrivateKey } = useZkPrivateKey();
 
+  const runningRef = useRef(false);
   const isRunning = state.steps.some((s) => s.status === "running");
   const isDone = state.steps.at(-1)?.status === "success";
   const txUrl = state.txSignature
@@ -390,6 +434,9 @@ export function useProveFlow(): UseProveFlowReturn {
 
   const runFlow = useCallback(
     async (mode: "live" | "demo", params?: TransferParams) => {
+      if (runningRef.current) return;
+      runningRef.current = true;
+      try {
       dispatch({ type: "START_FLOW", mode });
 
       dispatch({ type: "STEP_RUNNING", step: 0 });
@@ -410,9 +457,15 @@ export function useProveFlow(): UseProveFlowReturn {
         return;
       }
 
-      await runLiveFlow({ dispatch, walletHex, publicKey, connection, sendTransaction, generate, ensureApi, derivePrivateKey, transferParams: params });
+      if (!signAllTransactions) {
+        dispatch({ type: "STEP_ERROR", step: 1, error: "Wallet does not support batch transaction signing." });
+        return;
+      }
+
+      await runLiveFlow({ dispatch, walletHex, publicKey, connection, signAllTransactions, generate, ensureApi, derivePrivateKey, transferParams: params });
+      } finally { runningRef.current = false; }
     },
-    [connected, publicKey, walletHex, connection, sendTransaction, generate, ensureApi, derivePrivateKey],
+    [connected, publicKey, walletHex, connection, signAllTransactions, generate, ensureApi, derivePrivateKey],
   );
 
   const startFlow = useCallback((params: TransferParams) => runFlow("live", params), [runFlow]);

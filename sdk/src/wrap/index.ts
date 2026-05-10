@@ -207,6 +207,10 @@ export async function uploadProofChunked(
   const proofBytes = opts.proof;
   const program = await makeProgram(opts.connection);
 
+  console.log("[zksettle-sdk] uploadProofChunked: building initHookPayload ix", {
+    wallet: opts.wallet.toBase58(),
+    proofLen: proofBytes.length,
+  });
   const initIx = await buildInitHookPayloadIx(
     opts.wallet,
     proofBytes.length,
@@ -214,7 +218,9 @@ export async function uploadProofChunked(
     programId,
     program,
   );
+  console.log("[zksettle-sdk] uploadProofChunked: sending initHookPayload tx...");
   const initSignature = await signAndSend(new Transaction().add(initIx));
+  console.log("[zksettle-sdk] uploadProofChunked: initHookPayload sig:", initSignature);
 
   const writeIxs: TransactionInstruction[] = [];
   for (let offset = 0; offset < proofBytes.length; offset += chunkSize) {
