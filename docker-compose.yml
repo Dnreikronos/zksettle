@@ -20,10 +20,10 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-      target: api-gateway
     ports:
       - "4000:4000"
     environment:
+      SERVICE: "api-gateway"
       GATEWAY_PORT: "4000"
       GATEWAY_UPSTREAM_URL: "http://issuer-service:3000"
       GATEWAY_INDEXER_URL: "http://indexer:3001"
@@ -39,10 +39,10 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-      target: issuer-service
     ports:
       - "3000:3000"
     environment:
+      SERVICE: "issuer-service"
       LISTEN_ADDR: "0.0.0.0:3000"
       PROGRAM_ID: "${PROGRAM_ID:?set PROGRAM_ID}"
       KEYPAIR_PATH: "/keys/id.json"
@@ -54,10 +54,10 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-      target: indexer
     ports:
       - "3001:3001"
     environment:
+      SERVICE: "indexer"
       INDEXER_PORT: "3001"
       INDEXER_HELIUS_AUTH_TOKEN: "${INDEXER_HELIUS_AUTH_TOKEN:?set INDEXER_HELIUS_AUTH_TOKEN}"
       INDEXER_PROGRAM_ID: "${INDEXER_PROGRAM_ID:?set INDEXER_PROGRAM_ID}"
