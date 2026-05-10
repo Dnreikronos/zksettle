@@ -21,7 +21,7 @@ pub use types::{
     HOOK_PAYLOAD_SEED, MAX_HOOK_PROOF_BYTES,
 };
 
-/// Creates the payload PDA with header-only space (BASE_SPACE ≈ 301 bytes).
+/// Creates the payload PDA with header-only space (see `HookPayload::BASE_SPACE`).
 /// Follow up with one or more `resize_hook_payload` calls to grow the
 /// account to `BASE_SPACE + expected_proof_len` before writing chunks.
 #[derive(Accounts)]

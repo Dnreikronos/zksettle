@@ -61,7 +61,7 @@ pub fn resize_hook_payload_handler(ctx: Context<ResizeHookPayload>) -> Result<()
             needed - lamports,
         )?;
     }
-    hook_info.realloc(new_len, false)?;
+    hook_info.realloc(new_len, true)?;
 
     if new_len >= target {
         let payload = &mut ctx.accounts.hook_payload;
