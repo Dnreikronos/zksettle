@@ -48,6 +48,10 @@ vi.mock("@/components/dashboard/attestation-explorer-panel", () => ({
   AttestationExplorerPanel: () => <section data-testid="attestation-explorer">Attestation explorer</section>,
 }));
 
+vi.mock("@/app/dashboard/admin/admin-panels", () => ({
+  AdminPanels: () => <section data-testid="admin-panels">Admin panels</section>,
+}));
+
 vi.mock("@/components/dashboard/require-auth", () => ({
   RequireAuth: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
@@ -58,6 +62,7 @@ vi.mock("@/components/dashboard/require-api-key", () => ({
 
 import DashboardLayout from "./layout";
 import DashboardIndex from "./page";
+import AdminPage from "./admin/page";
 import ApiKeysPage from "./api-keys/page";
 import AttestationsPage from "./attestations/page";
 import AuditLogPage from "./audit-log/page";
@@ -125,6 +130,12 @@ describe("dashboard routes", () => {
     expect(screen.getByTestId("page-header").getAttribute("data-title")).toBe("Attestations");
     expect(screen.getByTestId("attestation-explorer")).toBeTruthy();
     cleanup();
+  });
+
+  it("renders the admin page with admin panels", () => {
+    render(<AdminPage />);
+    expect(screen.getByTestId("page-header").getAttribute("data-title")).toBe("Admin");
+    expect(screen.getByTestId("admin-panels")).toBeTruthy();
   });
 
 });

@@ -41,6 +41,14 @@ vi.mock("@/contexts/auth-context", () => ({
   }),
 }));
 
+vi.mock("@/hooks/use-nav-items", async () => {
+  const actual =
+    await vi.importActual<typeof import("./nav-items")>("./nav-items");
+  return {
+    useNavItems: () => actual.NAV_ITEMS,
+  };
+});
+
 import { findNavItem, NAV_GROUPS, NAV_ITEMS } from "./nav-items";
 import { MobileNavDrawer } from "./mobile-nav-drawer";
 import { Sidebar } from "./sidebar";
@@ -63,7 +71,7 @@ describe("dashboard chrome", () => {
 
   it("exposes grouped navigation metadata and path lookup", () => {
     expect(NAV_GROUPS.map((group) => group.id)).toEqual(["overview", "controls", "account"]);
-    expect(NAV_ITEMS).toHaveLength(7);
+    expect(NAV_ITEMS).toHaveLength(8);
     expect(findNavItem("/dashboard/api-keys")?.label).toBe("API keys");
     expect(findNavItem("/dashboard/api-keys/rotate")?.label).toBe("API keys");
     expect(findNavItem("/dashboard/unknown")).toBeUndefined();

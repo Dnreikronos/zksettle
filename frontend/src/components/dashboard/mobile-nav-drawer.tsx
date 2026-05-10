@@ -6,13 +6,15 @@ import { Menu, Xmark } from "iconoir-react";
 import { useEffect } from "react";
 
 import { Logo } from "@/components/icons/logo";
-import { NAV_GROUPS, NAV_ITEMS } from "@/components/dashboard/nav-items";
+import { NAV_GROUPS } from "@/components/dashboard/nav-items";
 import { useDrawer } from "@/hooks/use-drawer";
+import { useNavItems } from "@/hooks/use-nav-items";
 import { cn } from "@/lib/cn";
 
 export function MobileNavDrawer() {
   const { open, setOpen, close, drawerRef, triggerRef } = useDrawer();
   const pathname = usePathname() ?? "";
+  const navItems = useNavItems();
 
   useEffect(() => {
     setOpen(false);
@@ -69,7 +71,7 @@ export function MobileNavDrawer() {
                     </span>
                   </div>
                   <ul className="flex flex-col gap-[2px]">
-                    {NAV_ITEMS.filter((item) => item.group === group.id).map((item) => {
+                    {navItems.filter((item) => item.group === group.id).map((item) => {
                       const isActive =
                         item.href === "/dashboard"
                           ? pathname === item.href
