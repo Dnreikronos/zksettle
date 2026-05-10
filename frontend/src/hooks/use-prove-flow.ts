@@ -224,7 +224,8 @@ async function runStepSubmit(
   const {
     checkIssuerExists, buildRegisterIssuerIx,
     checkHookPayloadExists, buildCloseHookPayloadIx,
-    buildInitHookPayloadIx, buildWriteChunkIx, buildFinalizeHookPayloadIx,
+    buildInitHookPayloadIx, buildResizeHookPayloadIx,
+    buildWriteChunkIx, buildFinalizeHookPayloadIx,
     CHUNK_SIZE,
   } = sdk;
 
@@ -239,7 +240,10 @@ async function runStepSubmit(
   };
 
   const sendSigned = async (signed: Transaction) => {
-    const sig = await connection.sendRawTransaction(signed.serialize(), { skipPreflight: true });
+    const sig = await connection.sendRawTransaction(signed.serialize(), {
+      skipPreflight: true,
+      maxRetries: 3,
+    });
     await confirmTx(sig);
     return sig;
   };
@@ -281,6 +285,18 @@ async function runStepSubmit(
 
   const initIx = await buildInitHookPayloadIx(publicKey, proofBytes.length, connection);
 
+  // Solana caps realloc at 10 KiB per instruction. Compute how many
+  // resize instructions are needed to grow from header-only to full size.
+  const BASE_SPACE = 293;
+  const headerSize = 8 + BASE_SPACE;
+  const targetSize = headerSize + proofBytes.length;
+  const resizeIxs = [];
+  let currentSize = headerSize;
+  while (currentSize < targetSize) {
+    resizeIxs.push(await buildResizeHookPayloadIx(publicKey, connection));
+    currentSize = Math.min(targetSize, currentSize + 10_240);
+  }
+
   const writeIxs = [];
   for (let offset = 0; offset < proofBytes.length; offset += chunkSize) {
     const chunk = proofBytes.slice(offset, Math.min(offset + chunkSize, proofBytes.length));
@@ -296,32 +312,61 @@ async function runStepSubmit(
     amount: new BN(transferParams.amount),
   }, connection);
 
-  // Assemble transactions
-  const txs: Transaction[] = [];
-  txs.push(new Transaction().add(initIx));
+  // ── Batch 1: init + resize (own blockhash + Phantom popup) ──
+  const initResizeTxs: Transaction[] = [];
+  const initTx = new Transaction().add(initIx);
+  if (resizeIxs.length > 0) initTx.add(resizeIxs[0]!);
+  initResizeTxs.push(initTx);
+  for (let i = 1; i < resizeIxs.length; i++) {
+    initResizeTxs.push(new Transaction().add(resizeIxs[i]!));
+  }
+
+  const bh1 = await connection.getLatestBlockhash("confirmed");
+  for (const tx of initResizeTxs) {
+    tx.feePayer = publicKey;
+    tx.recentBlockhash = bh1.blockhash;
+  }
+  const signedInitResize = await signAllTransactions(initResizeTxs);
+  for (const tx of signedInitResize) {
+    await sendSigned(tx!);
+  }
+
+  // ── Batch 2: writes only (fresh blockhash + Phantom popup) ──
+  const writeTxs: Transaction[] = [];
   for (let i = 0; i < writeIxs.length; i += writesPerTx) {
     const tx = new Transaction();
     for (const ix of writeIxs.slice(i, i + writesPerTx)) tx.add(ix);
-    txs.push(tx);
+    writeTxs.push(tx);
   }
-  txs.push(new Transaction().add(finalizeIx));
 
-  // Set feePayer and recentBlockhash on all
-  const { blockhash } = await connection.getLatestBlockhash("confirmed");
-  for (const tx of txs) {
+  const bh2 = await connection.getLatestBlockhash("confirmed");
+  for (const tx of writeTxs) {
     tx.feePayer = publicKey;
-    tx.recentBlockhash = blockhash;
+    tx.recentBlockhash = bh2.blockhash;
+  }
+  const signedWrites = await signAllTransactions(writeTxs);
+
+  // Send writes sequentially — the on-chain handler enforces that each
+  // chunk offset matches high_water_mark, so ordering must be preserved.
+  let lastWriteSig = "";
+  for (const tx of signedWrites) {
+    lastWriteSig = await connection.sendRawTransaction(tx!.serialize(), {
+      skipPreflight: true,
+      maxRetries: 5,
+    });
   }
 
-  // ── Single Phantom popup: sign ALL transactions at once ──
-  const signedTxs = await signAllTransactions(txs);
+  // Confirming the last write guarantees all prior writes landed (each
+  // write's offset must match the cumulative high_water_mark).
+  if (lastWriteSig) await confirmTx(lastWriteSig);
 
-  // ── Send sequentially with confirmation between each ──
-  let finalSig = "";
-  for (let i = 0; i < signedTxs.length; i++) {
-    const sig = await sendSigned(signedTxs[i]!);
-    if (i === signedTxs.length - 1) finalSig = sig;
-  }
+  // ── Batch 3: finalize (own fresh blockhash + Phantom popup) ──
+  const finalizeTx = new Transaction().add(finalizeIx);
+  const bh3 = await connection.getLatestBlockhash("confirmed");
+  finalizeTx.feePayer = publicKey;
+  finalizeTx.recentBlockhash = bh3.blockhash;
+  const [signedFinalize] = await signAllTransactions([finalizeTx]);
+  const finalSig = await sendSigned(signedFinalize!);
 
   dispatch({ type: "SET_TX", signature: finalSig });
   dispatch({
@@ -378,12 +423,13 @@ function handleCredentialError(dispatch: Dispatch<FlowAction>, err: unknown): vo
 
 function handleSubmitError(dispatch: Dispatch<FlowAction>, err: unknown): void {
   console.error("[zksettle] Submit step error:", err);
+  try { console.error("[zksettle] Error JSON:", JSON.stringify(err, Object.getOwnPropertyNames(err as object))); } catch { /* */ }
   const errRecord = err as Record<string, unknown>;
   const inner = errRecord?.error;
   if (inner) console.error("[zksettle] Inner error:", inner);
   const logs = (errRecord?.logs ?? (inner as Record<string, unknown>)?.logs) as string[] | undefined;
   if (logs) console.error("[zksettle] Transaction logs:", logs);
-  const message = err instanceof Error ? err.message : "Transaction failed";
+  const message = err instanceof Error ? err.message : String(errRecord?.message ?? "Transaction failed");
   const isRejected = message.includes("rejected") || message.includes("User rejected");
   dispatch({ type: "STEP_ERROR", step: 4, error: isRejected ? "Transaction rejected by wallet." : message });
 }

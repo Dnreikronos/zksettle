@@ -138,6 +138,27 @@ export async function buildInitHookPayloadIx(
     .instruction();
 }
 
+export async function buildResizeHookPayloadIx(
+  wallet: PublicKey,
+  connection: Connection,
+  programId = ZKSETTLE_PROGRAM_ID,
+  program?: Program,
+): Promise<TransactionInstruction> {
+  const [issuerPda] = findIssuerPda(wallet, programId);
+  const [hookPayloadPda] = findHookPayloadPda(wallet, programId);
+  const prog = program ?? await makeProgram(connection);
+
+  return prog.methods
+    .resizeHookPayload()
+    .accounts({
+      authority: wallet,
+      issuer: issuerPda,
+      hookPayload: hookPayloadPda,
+      systemProgram: SystemProgram.programId,
+    })
+    .instruction();
+}
+
 export async function buildWriteChunkIx(
   wallet: PublicKey,
   offset: number,

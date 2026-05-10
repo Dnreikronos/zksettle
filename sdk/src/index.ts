@@ -1,6 +1,7 @@
 export { prove, loadCircuit, Prover, computeNullifier, type NullifierInputs } from "./prove/index.js";
 export {
   buildInitHookPayloadIx,
+  buildResizeHookPayloadIx,
   buildWriteChunkIx,
   buildFinalizeHookPayloadIx,
   uploadProofChunked,
