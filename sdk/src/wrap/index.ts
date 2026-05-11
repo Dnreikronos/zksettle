@@ -76,7 +76,7 @@ export async function buildRegisterIssuerIx(
   program?: Program,
 ): Promise<TransactionInstruction> {
   const [issuerPda] = findIssuerPda(wallet, programId);
-  const prog = program ?? await makeProgram(connection);
+  const prog = program ?? await makeProgram(connection, programId);
 
   return prog.methods
     .registerIssuer(
@@ -109,7 +109,7 @@ export async function buildCloseHookPayloadIx(
   program?: Program,
 ): Promise<TransactionInstruction> {
   const [hookPayloadPda] = findHookPayloadPda(wallet, programId);
-  const prog = program ?? await makeProgram(connection);
+  const prog = program ?? await makeProgram(connection, programId);
 
   return prog.methods
     .closeHookPayload()
@@ -120,11 +120,19 @@ export async function buildCloseHookPayloadIx(
     .instruction();
 }
 
-async function makeProgram(connection: Connection): Promise<Program> {
+async function makeProgram(
+  connection: Connection,
+  programId: PublicKey = ZKSETTLE_PROGRAM_ID,
+): Promise<Program> {
   const { AnchorProvider, Program } = await loadAnchorBrowser();
   const dummyWallet = new DummyWallet();
   const provider = new AnchorProvider(connection, dummyWallet as any, {});
-  return new Program(idl as any, provider);
+  // Anchor 0.31 reads the program address from `idl.address`; the old
+  // `new Program(idl, programId, provider)` form was removed. Honor a
+  // caller-supplied override by cloning the IDL with a new address — otherwise
+  // PDAs derived from `programId` would mismatch the ix target address.
+  const idlWithAddress = { ...(idl as any), address: programId.toBase58() };
+  return new Program(idlWithAddress, provider);
 }
 
 export async function buildInitHookPayloadIx(
@@ -136,7 +144,7 @@ export async function buildInitHookPayloadIx(
 ): Promise<TransactionInstruction> {
   const [issuerPda] = findIssuerPda(wallet, programId);
   const [hookPayloadPda] = findHookPayloadPda(wallet, programId);
-  const prog = program ?? await makeProgram(connection);
+  const prog = program ?? await makeProgram(connection, programId);
 
   return prog.methods
     .initHookPayload(proofLen)
@@ -157,7 +165,7 @@ export async function buildResizeHookPayloadIx(
 ): Promise<TransactionInstruction> {
   const [issuerPda] = findIssuerPda(wallet, programId);
   const [hookPayloadPda] = findHookPayloadPda(wallet, programId);
-  const prog = program ?? await makeProgram(connection);
+  const prog = program ?? await makeProgram(connection, programId);
 
   return prog.methods
     .resizeHookPayload()
@@ -180,7 +188,7 @@ export async function buildWriteChunkIx(
 ): Promise<TransactionInstruction> {
   const [issuerPda] = findIssuerPda(wallet, programId);
   const [hookPayloadPda] = findHookPayloadPda(wallet, programId);
-  const prog = program ?? await makeProgram(connection);
+  const prog = program ?? await makeProgram(connection, programId);
 
   return prog.methods
     .writeHookProof(offset, Buffer.from(chunk))
@@ -208,7 +216,7 @@ export async function buildFinalizeHookPayloadIx(
 ): Promise<TransactionInstruction> {
   const [issuerPda] = findIssuerPda(wallet, programId);
   const [hookPayloadPda] = findHookPayloadPda(wallet, programId);
-  const prog = program ?? await makeProgram(connection);
+  const prog = program ?? await makeProgram(connection, programId);
 
   const lightArgs = metadata.lightArgs ?? DEFAULT_LIGHT_ARGS;
 
@@ -240,7 +248,7 @@ export async function buildSettleHookIx(
   const [hookPayloadPda] = findHookPayloadPda(wallet, programId);
   const [registryPda] = findRegistryPda(programId);
   const [treeCreatorPda] = findTreeCreatorPda(programId);
-  const prog = program ?? await makeProgram(connection);
+  const prog = program ?? await makeProgram(connection, programId);
 
   // Fetch registry (resolves merkle_tree; settle_hook enforces
   // `merkle_tree == registry.merkle_tree`) and hook_payload (recipient/mint
@@ -284,7 +292,7 @@ export async function uploadProofChunked(
   const raw = opts.chunkSize ?? CHUNK_SIZE;
   const chunkSize = Math.max(1, Math.floor(raw));
   const proofBytes = opts.proof;
-  const program = await makeProgram(opts.connection);
+  const program = await makeProgram(opts.connection, programId);
 
   console.log("[zksettle-sdk] uploadProofChunked: building initHookPayload ix", {
     wallet: opts.wallet.toBase58(),
