@@ -14,8 +14,19 @@ import type {
   ChunkedUploadResult,
 } from "../types.js";
 import { loadAnchorBrowser } from "../anchor.js";
-import { ZKSETTLE_PROGRAM_ID } from "../constants.js";
-import { findIssuerPda, findHookPayloadPda } from "./pda.js";
+import {
+  ZKSETTLE_PROGRAM_ID,
+  MPL_BUBBLEGUM_ID,
+  SPL_ACCOUNT_COMPRESSION_ID,
+  SPL_NOOP_ID,
+} from "../constants.js";
+import {
+  findIssuerPda,
+  findHookPayloadPda,
+  findRegistryPda,
+  findTreeCreatorPda,
+  findTreeConfigPda,
+} from "./pda.js";
 import idl from "../idl/zksettle.json" with { type: "json" };
 
 // Minimal wallet shim that satisfies AnchorProvider without importing
@@ -214,6 +225,53 @@ export async function buildFinalizeHookPayloadIx(
       authority: wallet,
       issuer: issuerPda,
       hookPayload: hookPayloadPda,
+    })
+    .instruction();
+}
+
+export async function buildSettleHookIx(
+  wallet: PublicKey,
+  amount: AnchorBN,
+  connection: Connection,
+  programId = ZKSETTLE_PROGRAM_ID,
+  program?: Program,
+): Promise<TransactionInstruction> {
+  const [issuerPda] = findIssuerPda(wallet, programId);
+  const [hookPayloadPda] = findHookPayloadPda(wallet, programId);
+  const [registryPda] = findRegistryPda(programId);
+  const [treeCreatorPda] = findTreeCreatorPda(programId);
+  const prog = program ?? await makeProgram(connection);
+
+  // Fetch registry (resolves merkle_tree; settle_hook enforces
+  // `merkle_tree == registry.merkle_tree`) and hook_payload (recipient/mint
+  // staged at finalize; both `destination_token` and `leaf_owner` must equal
+  // recipient) in parallel — independent reads.
+  const [registry, payload] = await Promise.all([
+    (prog.account as any).bubblegumTreeRegistry.fetch(registryPda),
+    (prog.account as any).hookPayload.fetch(hookPayloadPda),
+  ]);
+  const merkleTree: PublicKey = registry.merkleTree;
+  const [treeConfigPda] = findTreeConfigPda(merkleTree);
+  const recipient: PublicKey = payload.recipient;
+  const mint: PublicKey = payload.mint;
+
+  return prog.methods
+    .settleHook(amount)
+    .accounts({
+      authority: wallet,
+      mint,
+      destinationToken: recipient,
+      hookPayload: hookPayloadPda,
+      leafOwner: recipient,
+      issuer: issuerPda,
+      registry: registryPda,
+      merkleTree,
+      treeConfig: treeConfigPda,
+      treeCreator: treeCreatorPda,
+      bubblegumProgram: MPL_BUBBLEGUM_ID,
+      compressionProgram: SPL_ACCOUNT_COMPRESSION_ID,
+      logWrapper: SPL_NOOP_ID,
+      systemProgram: SystemProgram.programId,
     })
     .instruction();
 }
