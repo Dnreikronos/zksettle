@@ -337,7 +337,7 @@ async function runStepSubmit(
   }
   const signedInitResize = await signAllTransactions(initResizeTxs);
   for (const tx of signedInitResize) {
-    await sendSigned(tx!, bh1);
+    await sendSigned(tx, bh1);
   }
 
   // ── Batch 2: writes only (fresh blockhash + Phantom popup) ──
