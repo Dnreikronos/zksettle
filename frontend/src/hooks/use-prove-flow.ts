@@ -402,17 +402,14 @@ async function runStepSubmit(
   return finalSig;
 }
 
-async function runStepConfirm(
-  dispatch: Dispatch<FlowAction>,
-  connection: Connection,
-  txSignature: string | undefined,
-): Promise<void> {
+async function runStepConfirm(dispatch: Dispatch<FlowAction>): Promise<void> {
+  // Step 4 (`runStepSubmit`) already awaited `confirmTransaction` for the
+  // settle tx using its original signing blockhash. Re-confirming here with a
+  // freshly-fetched blockhash would (a) decouple the wait-loop expiry from
+  // the actual tx (Solana docs explicitly warn against this) and (b) be
+  // redundant. Keep this step purely for the UI step-machine.
   dispatch({ type: "STEP_RUNNING", step: 5 });
   const start = performance.now();
-  if (txSignature) {
-    const latestBlockhash = await connection.getLatestBlockhash("confirmed");
-    await connection.confirmTransaction({ signature: txSignature, ...latestBlockhash }, "confirmed");
-  }
   dispatch({
     type: "STEP_SUCCESS",
     step: 5,
@@ -480,7 +477,7 @@ async function runLiveFlow(ctx: LiveFlowContext): Promise<void> {
     return;
   }
 
-  try { await runStepConfirm(dispatch, connection, txSignature); }
+  try { await runStepConfirm(dispatch); }
   catch (err) {
     if (txSignature) { stepError(dispatch, 5, err, "Confirmation failed"); }
     else { dispatch({ type: "STEP_SUCCESS", step: 5 }); }
