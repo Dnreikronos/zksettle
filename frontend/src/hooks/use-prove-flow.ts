@@ -226,6 +226,7 @@ async function runStepSubmit(
     checkHookPayloadExists, buildCloseHookPayloadIx,
     buildInitHookPayloadIx, buildResizeHookPayloadIx,
     buildWriteChunkIx, buildFinalizeHookPayloadIx,
+    buildSettleHookIx,
     CHUNK_SIZE,
   } = sdk;
 
@@ -366,7 +367,22 @@ async function runStepSubmit(
   finalizeTx.feePayer = publicKey;
   finalizeTx.recentBlockhash = bh3.blockhash;
   const [signedFinalize] = await signAllTransactions([finalizeTx]);
-  const finalSig = await sendSigned(signedFinalize!);
+  await sendSigned(signedFinalize!);
+
+  // ── Batch 4: settle_hook — invokes gnark verifier, emits ProofSettled,
+  // closes the payload PDA and refunds rent. Without this the indexer
+  // never sees a ProofSettled event and the events table stays empty.
+  const settleIx = await buildSettleHookIx(
+    publicKey,
+    new BN(transferParams.amount),
+    connection,
+  );
+  const settleTx = new Transaction().add(settleIx);
+  const bh4 = await connection.getLatestBlockhash("confirmed");
+  settleTx.feePayer = publicKey;
+  settleTx.recentBlockhash = bh4.blockhash;
+  const [signedSettle] = await signAllTransactions([settleTx]);
+  const finalSig = await sendSigned(signedSettle!);
 
   dispatch({ type: "SET_TX", signature: finalSig });
   dispatch({
