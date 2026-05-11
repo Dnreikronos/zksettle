@@ -45,13 +45,14 @@ async fn main() {
 
     let cfg = Config::from_env();
 
-    let keypair_json: Vec<u8> = match std::env::var("ISSUER_KEYPAIR_JSON") {
-        Ok(env_json) if !env_json.trim().is_empty() => {
+    let keypair_json: Vec<u8> = match cfg.keypair_json {
+        Some(ref env_json) => {
             tracing::info!("loading issuer keypair from ISSUER_KEYPAIR_JSON env var");
-            serde_json::from_str(&env_json)
-                .unwrap_or_else(|e| panic!("failed to parse ISSUER_KEYPAIR_JSON: {e}"))
+            serde_json::from_str(env_json).unwrap_or_else(|e| {
+                panic!("failed to parse ISSUER_KEYPAIR_JSON (expected JSON array like [1,2,3,...]): {e}")
+            })
         }
-        _ => {
+        None => {
             tracing::info!(path = %cfg.keypair_path, "loading issuer keypair from file");
             let keypair_bytes = std::fs::read(&cfg.keypair_path).unwrap_or_else(|e| {
                 panic!("failed to read keypair at {}: {e}", cfg.keypair_path)

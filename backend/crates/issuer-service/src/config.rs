@@ -5,6 +5,7 @@ use zksettle_config::{env_or, expand_tilde};
 pub struct Config {
     pub rpc_url: String,
     pub keypair_path: String,
+    pub keypair_json: Option<String>,
     pub program_id: String,
     pub rotation_interval_secs: u64,
     pub listen_addr: SocketAddr,
@@ -17,6 +18,9 @@ impl Config {
         Self {
             rpc_url: env_or("RPC_URL", "http://127.0.0.1:8899"),
             keypair_path: expand_tilde(&env_or("KEYPAIR_PATH", "~/.config/solana/id.json")),
+            keypair_json: std::env::var("ISSUER_KEYPAIR_JSON")
+                .ok()
+                .filter(|s| !s.trim().is_empty()),
             program_id: env_or("PROGRAM_ID", "zkSet11ezkSet11ezkSet11ezkSet11ezkSet11ezkS"),
             rotation_interval_secs: env_or("ROTATION_INTERVAL_SECS", "43200")
                 .parse()
