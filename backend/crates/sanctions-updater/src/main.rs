@@ -27,10 +27,11 @@ async fn main() {
         )
         .init();
 
-    let keypair_bytes = std::fs::read(&cfg.keypair_path)
-        .unwrap_or_else(|e| panic!("failed to read keypair at {}: {e}", cfg.keypair_path));
-    let keypair_json: Vec<u8> = serde_json::from_slice(&keypair_bytes)
-        .unwrap_or_else(|e| panic!("failed to parse keypair JSON: {e}"));
+    let keypair_json = zksettle_config::load_keypair_json(
+        cfg.keypair_json.as_deref(),
+        &cfg.keypair_path,
+        "ISSUER_KEYPAIR_JSON",
+    );
     let keypair = Keypair::try_from(keypair_json.as_slice())
         .unwrap_or_else(|e| panic!("invalid keypair bytes: {e}"));
     let program_id: Pubkey = cfg
