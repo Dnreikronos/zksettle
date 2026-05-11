@@ -286,16 +286,14 @@ async function runStepSubmit(
 
   const initIx = await buildInitHookPayloadIx(publicKey, proofBytes.length, connection);
 
-  // Solana caps realloc at 10 KiB per instruction. Compute how many
-  // resize instructions are needed to grow from header-only to full size.
-  const BASE_SPACE = 293;
-  const headerSize = 8 + BASE_SPACE;
-  const targetSize = headerSize + proofBytes.length;
+  // Solana caps realloc at 10 KiB per instruction. Pre-count resize ixs so
+  // they batch into one Phantom popup with init. Upper-bound the count from
+  // proof size alone so we never under-allocate (extra resizes are idempotent
+  // no-ops on-chain). Avoids hardcoding HookPayload::BASE_SPACE on the client.
+  const resizeCount = Math.ceil(proofBytes.length / 10_240);
   const resizeIxs = [];
-  let currentSize = headerSize;
-  while (currentSize < targetSize) {
+  for (let i = 0; i < resizeCount; i++) {
     resizeIxs.push(await buildResizeHookPayloadIx(publicKey, connection));
-    currentSize = Math.min(targetSize, currentSize + 10_240);
   }
 
   const writeIxs = [];
