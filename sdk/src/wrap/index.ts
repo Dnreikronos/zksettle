@@ -308,6 +308,11 @@ export async function uploadProofChunked(
   console.log("[zksettle-sdk] uploadProofChunked: sending initHookPayload tx...");
   const initSignature = await signAndSend(new Transaction().add(initIx));
   console.log("[zksettle-sdk] uploadProofChunked: initHookPayload sig:", initSignature);
+  // `signAndSend` is caller-supplied — wallet adapters typically resolve after
+  // broadcast, not after confirmation. Explicitly confirm before any
+  // getAccountInfo read so the loop below doesn't race a null/stale account.
+  // eslint-disable-next-line @typescript-eslint/no-deprecated -- signature-only overload: we don't own the tx blockhash (caller-set), so the strategy overload isn't available.
+  await opts.connection.confirmTransaction(initSignature, "confirmed");
 
   // resize_hook_payload grows the PDA AND allocates `proof_and_witness`.
   // Without it write_hook_proof panics copying into a zero-length Vec.
@@ -331,7 +336,12 @@ export async function uploadProofChunked(
       programId,
       program,
     );
-    await signAndSend(new Transaction().add(resizeIx));
+    const resizeSig = await signAndSend(new Transaction().add(resizeIx));
+    // Same rationale as the post-init confirm: the loop terminates on
+    // observed account size, so we must wait for the resize to land before
+    // reading or the loop can hang reading the pre-resize size.
+    // eslint-disable-next-line @typescript-eslint/no-deprecated -- signature-only overload: we don't own the tx blockhash (caller-set), so the strategy overload isn't available.
+    await opts.connection.confirmTransaction(resizeSig, "confirmed");
     const after = await opts.connection.getAccountInfo(hookPayloadPda);
     if (!after) {
       throw new Error("hook_payload PDA missing after resize");
@@ -362,6 +372,13 @@ export async function uploadProofChunked(
       tx.add(ix);
     }
     const sig = await signAndSend(tx);
+    // `write_hook_proof` enforces `offset == high_water_mark` on-chain. If
+    // `signAndSend` resolves on broadcast (typical wallet-adapter behavior),
+    // the next chunk's submit can race ahead of the previous one and the
+    // program rejects it. There is no SDK-side retry, so confirm before the
+    // next write.
+    // eslint-disable-next-line @typescript-eslint/no-deprecated -- signature-only overload: we don't own the tx blockhash (caller-set), so the strategy overload isn't available.
+    await opts.connection.confirmTransaction(sig, "confirmed");
     chunkSignatures.push(sig);
   }
 
