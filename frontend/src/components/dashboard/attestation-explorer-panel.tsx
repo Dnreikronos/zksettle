@@ -4,6 +4,7 @@ import { Copy, NavArrowDown, Search, Xmark } from "iconoir-react";
 import { useEffect, useRef, useState, type ReactNode, type SyntheticEvent } from "react";
 import { toast } from "sonner";
 
+import { clearActiveApiKey } from "@/lib/api/active-key";
 import { EmptyState } from "@/components/dashboard/empty-state";
 import { StatusPill, type StatusKind } from "@/components/dashboard/status-pill";
 import { TruncatedHash } from "@/components/dashboard/truncated-hash";
@@ -78,7 +79,8 @@ function describeProofError(err: unknown): { kind: "not-found" | "auth" | "other
       const detail = typeof body?.error === "string" ? body.error : "";
       if (detail.includes("signature") || detail.includes("wallet"))
         return { kind: "auth", message: "You can only look up proofs for your own connected wallet." };
-      return { kind: "auth", message: "Not authorized. Select an active API key in the sidebar." };
+      void clearActiveApiKey();
+      return { kind: "auth", message: "API key expired or invalid. Re-authenticate below." };
     }
     return { kind: "other", message: err.message };
   }

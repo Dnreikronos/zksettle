@@ -33,6 +33,7 @@ import {
   useRecordWallet,
 } from "@/hooks/use-recent-wallets";
 import { useRegisterWallet } from "@/hooks/use-register-wallet";
+import { clearActiveApiKey } from "@/lib/api/active-key";
 import { ApiError } from "@/lib/api/client";
 import type { Credential } from "@/lib/api/schemas";
 import { cn } from "@/lib/cn";
@@ -51,8 +52,10 @@ function formatTimestamp(unixSeconds: number): string {
 function describeError(err: unknown): { kind: "not-found" | "auth" | "conflict" | "other"; message: string } {
   if (err instanceof ApiError) {
     if (err.status === 404) return { kind: "not-found", message: "No credential for this wallet." };
-    if (err.status === 401 || err.status === 403)
-      return { kind: "auth", message: "Not authorized. Select an active API key in the sidebar." };
+    if (err.status === 401 || err.status === 403) {
+      void clearActiveApiKey();
+      return { kind: "auth", message: "API key expired or invalid. Re-authenticate below." };
+    }
     if (err.status === 409) return { kind: "conflict", message: "Wallet already has a credential." };
     if (err.status === 400) return { kind: "other", message: "Invalid wallet address." };
     return { kind: "other", message: err.message };
@@ -64,8 +67,10 @@ function describeRegisterError(err: unknown): string {
   if (err instanceof ApiError) {
     if (err.status === 409) return "Wallet is already registered in the membership tree.";
     if (err.status === 400) return "Invalid wallet address.";
-    if (err.status === 401 || err.status === 403)
-      return "Not authorized. Select an active API key in the sidebar.";
+    if (err.status === 401 || err.status === 403) {
+      void clearActiveApiKey();
+      return "API key expired or invalid. Re-authenticate below.";
+    }
     return err.message;
   }
   return err instanceof Error ? err.message : "Unknown error";
