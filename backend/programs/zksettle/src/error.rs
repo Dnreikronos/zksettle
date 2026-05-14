@@ -60,7 +60,7 @@ pub enum ZkSettleError {
     SanctionsRootMismatch,
     #[msg("Witness jurisdiction_root does not match issuer PDA")]
     JurisdictionRootMismatch,
-    #[msg("Witness timestamp does not match on-chain clock")]
+    #[msg("Witness timestamp does not match epoch boundary")]
     TimestampMismatch,
     #[msg("Sanctions root must be non-zero")]
     ZeroSanctionsRoot,
@@ -93,6 +93,8 @@ pub enum ZkSettleError {
     PayloadNotReady,
     #[msg("Proof length does not match expected_proof_len at finalize")]
     ProofIncomplete,
+    #[msg("Computing witness timestamp (epoch * EPOCH_LEN_SECS) overflowed u64")]
+    EpochTimestampOverflow,
 }
 
 /// Map an external Result's Err into a `ZkSettleError`, logging the source via
@@ -177,6 +179,7 @@ mod tests {
             ZkSettleError::PayloadAlreadyFinalized as u32,
             ZkSettleError::PayloadNotReady as u32,
             ZkSettleError::ProofIncomplete as u32,
+            ZkSettleError::EpochTimestampOverflow as u32,
         ];
         let mut seen = std::collections::HashSet::new();
         for code in &codes {

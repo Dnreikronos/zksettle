@@ -1,0 +1,30 @@
+# Railway is configured per service with Root Directory = /backend, so it
+# only uploads the backend/ subtree. Frontend / sdk / docs etc. are outside
+# that root and never reach Railway. Patterns below focus on what's inside
+# backend/ and apply during the upload phase.
+
+# Heavy outputs
+**/target/
+**/node_modules/
+**/mutants.out/
+**/mutants.out.old/
+
+# Local secrets — never push
+.env
+.env.*
+!.env.example
+
+# Local dev scratch
+*.proof
+*.wtns
+test-ledger/
+.anchor/
+.surfpool/
+.yarn/
+**/tests/fixtures/
+
+# VCS metadata
+.git/
+
+# Note: backend/artefacts/zksettle_slice.{json,ccs,pk} ship as part of the
+# normal upload — no whitelist needed since nothing above excludes them.

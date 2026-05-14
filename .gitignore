@@ -18,3 +18,12 @@ sdk/dist/
 sdk/node_modules/
 sdk/package-lock.json
 video/
+
+# Ship pre-built Sunspot circuit artefacts so the issuer-service Dockerfile
+# can bake them into the image without needing nargo/sunspot at build time.
+# Artefacts live under backend/artefacts/ (regen step copies them there from
+# circuits/target/). The *.pk rule above would otherwise hide the proving
+# key, so we whitelist the three runtime files explicitly.
+!backend/artefacts/zksettle_slice.json
+!backend/artefacts/zksettle_slice.ccs
+!backend/artefacts/zksettle_slice.pk
