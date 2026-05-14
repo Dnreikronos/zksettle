@@ -1,0 +1,31 @@
+frontend/
+sdk/
+scripts/
+docs/
+video/
+**/target/
+node_modules/
+**/node_modules/
+**/mutants.out/
+**/mutants.out.old/
+.git/
+.env
+.env.*
+!.env.example
+*.proof
+*.wtns
+test-ledger/
+.anchor/
+.surfpool/
+.yarn/
+
+# The issuer-service Docker image bakes in Sunspot circuit artefacts from
+# circuits/target/zksettle_slice.{json,ccs,pk}. Keep that subtree shipped to
+# Railway; the rest of circuits/ (Noir source, intermediates) is not needed
+# at runtime. **/target/ above already excludes circuits/target by default,
+# so we re-include the dir then whitelist the 3 artefacts the runtime reads.
+!circuits/target/
+circuits/target/*
+!circuits/target/zksettle_slice.json
+!circuits/target/zksettle_slice.ccs
+!circuits/target/zksettle_slice.pk
