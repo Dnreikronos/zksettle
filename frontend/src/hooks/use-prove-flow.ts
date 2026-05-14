@@ -2,7 +2,7 @@
 
 import { useCallback, useReducer, useRef, type Dispatch } from "react";
 import { TransactionExpiredBlockheightExceededError } from "@solana/web3.js";
-import type { Connection, PublicKey, Transaction } from "@solana/web3.js";
+import type { Connection, PublicKey, Transaction, TransactionInstruction } from "@solana/web3.js";
 
 import { useWallet, useConnection } from "@/hooks/use-wallet-connection";
 import { useProofGeneration } from "@/hooks/use-proof-generation";
@@ -205,6 +205,169 @@ async function runStepProofGeneration(
   return { proofResult, zkPrivateKey, credentialExpiry, jurisdictionProof };
 }
 
+// ── Submit helpers (module-level to keep runStepSubmit's cognitive complexity low) ──
+
+type Blockhash = { blockhash: string; lastValidBlockHeight: number };
+type ConfirmCommitment = "processed" | "confirmed" | "finalized";
+type SendOpts = { skipPreflight?: boolean; maxRetries?: number };
+
+const CONFIRM_FALLBACK_TIMEOUT_MS = 30_000;
+const CONFIRM_FALLBACK_INITIAL_DELAY_MS = 1_000;
+const CONFIRM_FALLBACK_MAX_DELAY_MS = 4_000;
+const REBROADCAST_INTERVAL_MS = 2_000;
+// Edge-window grace after bh expiry: a tx can land at the very last valid
+// block while `getBlockHeight` already reports past `lastValidBlockHeight`.
+const FINAL_POLL_TIMEOUT_MS = 30_000;
+
+const HEX_BYTE_REGEX = /.{1,2}/g;
+function hexToBytes(hex: string): Uint8Array {
+  const clean = hex.startsWith("0x") ? hex.slice(2) : hex;
+  return new Uint8Array(clean.match(HEX_BYTE_REGEX)?.map((b) => Number.parseInt(b, 16)) ?? []);
+}
+
+function commitmentReached(
+  status: string | null | undefined,
+  commitment: ConfirmCommitment,
+): boolean {
+  if (!status) return false;
+  if (commitment === "processed") {
+    return status === "processed" || status === "confirmed" || status === "finalized";
+  }
+  return status === "confirmed" || status === "finalized";
+}
+
+// BlockheightBasedTransactionConfirmationStrategy returns the moment current
+// height passes lastValidBlockHeight, even if the tx lands at the edge of the
+// validity window. Poll getSignatureStatus directly so a late inclusion isn't
+// surfaced as a false-negative expiry.
+async function tryConfirmViaPolling(
+  connection: Connection,
+  sig: string,
+  commitment: ConfirmCommitment,
+): Promise<boolean> {
+  const deadline = Date.now() + CONFIRM_FALLBACK_TIMEOUT_MS;
+  let delay = CONFIRM_FALLBACK_INITIAL_DELAY_MS;
+  while (Date.now() < deadline) {
+    const { value } = await connection.getSignatureStatus(sig, {
+      searchTransactionHistory: true,
+    });
+    if (commitmentReached(value?.confirmationStatus, commitment)) {
+      if (value?.err) {
+        throw new Error("tx landed but failed on chain", { cause: value.err });
+      }
+      return true;
+    }
+    await new Promise((r) => setTimeout(r, delay));
+    delay = Math.min(delay * 2, CONFIRM_FALLBACK_MAX_DELAY_MS);
+  }
+  return false;
+}
+
+// `confirmTransaction({signature, blockhash, lastValidBlockHeight})` ties the
+// wait-loop expiry to the SAME blockhash the tx was signed with. Fetching a
+// fresh blockhash here decouples the timeout from actual tx expiry and can
+// yield false timeouts / false success (Solana docs). Always pass the bh that
+// was set on `tx.recentBlockhash` before signing.
+async function confirmTx(
+  connection: Connection,
+  sig: string,
+  bh: Blockhash,
+  commitment: ConfirmCommitment = "confirmed",
+): Promise<void> {
+  try {
+    await connection.confirmTransaction(
+      { signature: sig, blockhash: bh.blockhash, lastValidBlockHeight: bh.lastValidBlockHeight },
+      commitment,
+    );
+  } catch (err) {
+    // Narrow: only fall back on the strategy's edge-window expiry. Other errors
+    // (RPC/network/SendTransactionError) re-throw immediately so we don't burn
+    // 30s polling on a failure that won't resolve.
+    if (!(err instanceof TransactionExpiredBlockheightExceededError)) throw err;
+    if (!(await tryConfirmViaPolling(connection, sig, commitment))) throw err;
+  }
+}
+
+async function sendSigned(
+  connection: Connection,
+  signed: Transaction,
+  bh: Blockhash,
+  commitment: ConfirmCommitment = "confirmed",
+  opts: SendOpts = {},
+): Promise<string> {
+  const sig = await connection.sendRawTransaction(signed.serialize(), {
+    skipPreflight: opts.skipPreflight ?? true,
+    maxRetries: opts.maxRetries ?? 3,
+  });
+  await confirmTx(connection, sig, bh, commitment);
+  return sig;
+}
+
+async function pollFinalizeLanded(
+  connection: Connection,
+  sig: string,
+): Promise<boolean> {
+  let value: Awaited<ReturnType<typeof connection.getSignatureStatuses>>["value"];
+  try {
+    ({ value } = await connection.getSignatureStatuses([sig], {
+      searchTransactionHistory: true,
+    }));
+  } catch {
+    return false;
+  }
+  const status = value[0];
+  if (!status) return false;
+  if (status.err) {
+    throw new Error("finalize landed but failed on chain", { cause: status.err });
+  }
+  return (
+    status.confirmationStatus === "confirmed" ||
+    status.confirmationStatus === "finalized"
+  );
+}
+
+async function tryGetBlockHeight(connection: Connection): Promise<number | null> {
+  try {
+    return await connection.getBlockHeight("confirmed");
+  } catch {
+    return null;
+  }
+}
+
+// RPC calls inside the loop (`getSignatureStatuses`, `getBlockHeight`,
+// `sendRawTransaction`) are all wrapped so a transient devnet blip can't abort
+// the rebroadcast loop before the bh window naturally ends. Only the "landed
+// but failed on-chain" path propagates — that's a real failure.
+async function rebroadcastUntilLandedOrExpired(
+  connection: Connection,
+  raw: Uint8Array,
+  sig: string,
+  bh: Blockhash,
+): Promise<void> {
+  let pastExpiry = false;
+  let expiryDeadline = 0;
+  while (true) {
+    if (await pollFinalizeLanded(connection, sig)) return;
+    if (!pastExpiry) {
+      const height = await tryGetBlockHeight(connection);
+      if (height !== null && height > bh.lastValidBlockHeight) {
+        pastExpiry = true;
+        expiryDeadline = Date.now() + FINAL_POLL_TIMEOUT_MS;
+      } else {
+        // Re-broadcast: same signed bytes → idempotent. Swallow errors so a
+        // transient RPC blip doesn't kill the loop before bh expiry.
+        await connection
+          .sendRawTransaction(raw, { skipPreflight: true, maxRetries: 0 })
+          .catch(() => {});
+      }
+    } else if (Date.now() > expiryDeadline) {
+      break;
+    }
+    await new Promise((r) => setTimeout(r, REBROADCAST_INTERVAL_MS));
+  }
+  throw new TransactionExpiredBlockheightExceededError(sig);
+}
+
 async function runStepSubmit(
   dispatch: Dispatch<FlowAction>,
   proofResult: ProofResult,
@@ -220,9 +383,9 @@ async function runStepSubmit(
   transferParams: TransferParams,
 ): Promise<string | undefined> {
   dispatch({ type: "STEP_RUNNING", step: 4 });
-
   const start = performance.now();
-  const [sdk, { BN }, { PublicKey: SolPublicKey, Transaction, ComputeBudgetProgram }] = await Promise.all([
+
+  const [sdk, { BN }, { PublicKey: SolPublicKey, Transaction: SolTransaction, ComputeBudgetProgram }] = await Promise.all([
     import("@zksettle/sdk"),
     import("@coral-xyz/anchor"),
     import("@solana/web3.js"),
@@ -235,141 +398,186 @@ async function runStepSubmit(
     CHUNK_SIZE,
   } = sdk;
 
-  const hexToBytes = (hex: string): Uint8Array => {
-    const clean = hex.startsWith("0x") ? hex.slice(2) : hex;
-    return new Uint8Array(clean.match(/.{1,2}/g)?.map((b) => Number.parseInt(b, 16)) ?? []);
+  // Intermediate batches (init/resize/writes) use "processed" to skip the
+  // ~5-15s confirmed-commitment wait. The next batch fetches a fresh
+  // "confirmed" blockhash before signing, so account-state visibility is
+  // still covered for the leader. Finalize stays at "confirmed" — it's the
+  // final tx and the indexer keys off ProofSettled landing in a confirmed block.
+  const signSendConfirmSingleIx = async (
+    ix: TransactionInstruction,
+    commitment: ConfirmCommitment,
+  ): Promise<void> => {
+    const tx = new SolTransaction().add(ix);
+    tx.feePayer = publicKey;
+    const bh = await connection.getLatestBlockhash("confirmed");
+    tx.recentBlockhash = bh.blockhash;
+    const [signed] = await signAllTransactions([tx]);
+    await sendSigned(connection, signed!, bh, commitment);
   };
 
-  // `confirmTransaction({signature, blockhash, lastValidBlockHeight})` ties
-  // the wait-loop expiry to the SAME blockhash the tx was signed with.
-  // Fetching a fresh blockhash here decouples the timeout from actual tx
-  // expiry and can yield false timeouts / false success (Solana docs).
-  // Always pass the bh that was set on `tx.recentBlockhash` before signing.
-  type Blockhash = { blockhash: string; lastValidBlockHeight: number };
-  type ConfirmCommitment = "processed" | "confirmed" | "finalized";
-  const CONFIRM_FALLBACK_TIMEOUT_MS = 30_000;
-  const CONFIRM_FALLBACK_INITIAL_DELAY_MS = 1_000;
-  const CONFIRM_FALLBACK_MAX_DELAY_MS = 4_000;
-  // Intermediate batches (init/resize/writes/finalize) use "processed" to skip
-  // the ~5-15s confirmed-commitment wait. The next batch fetches a fresh
-  // "confirmed" blockhash before signing, so account-state visibility is still
-  // covered for the leader. Settle stays at "confirmed" — it's the final tx
-  // and the indexer keys off ProofSettled landing in a confirmed block.
-  const confirmTx = async (
-    sig: string,
-    bh: Blockhash,
-    commitment: ConfirmCommitment = "confirmed",
-  ) => {
-    try {
-      await connection.confirmTransaction(
-        { signature: sig, blockhash: bh.blockhash, lastValidBlockHeight: bh.lastValidBlockHeight },
-        commitment,
-      );
-    } catch (err) {
-      // Narrow: only fall back on the strategy's edge-window expiry.
-      // Other errors (RPC/network/SendTransactionError) re-throw immediately
-      // so we don't burn 30s polling on a failure that won't resolve.
-      if (!(err instanceof TransactionExpiredBlockheightExceededError)) throw err;
-      // BlockheightBasedTransactionConfirmationStrategy returns the moment
-      // current height passes lastValidBlockHeight, even if the tx lands at
-      // the edge of the validity window. Poll getSignatureStatus directly
-      // so a late inclusion isn't surfaced as a false-negative expiry.
-      const deadline = Date.now() + CONFIRM_FALLBACK_TIMEOUT_MS;
-      let delay = CONFIRM_FALLBACK_INITIAL_DELAY_MS;
-      while (Date.now() < deadline) {
-        const { value } = await connection.getSignatureStatus(sig, {
-          searchTransactionHistory: true,
-        });
-        const reached =
-          commitment === "processed"
-            ? value?.confirmationStatus === "processed" ||
-              value?.confirmationStatus === "confirmed" ||
-              value?.confirmationStatus === "finalized"
-            : value?.confirmationStatus === "confirmed" ||
-              value?.confirmationStatus === "finalized";
-        if (reached) {
-          if (value?.err) {
-            throw new Error("tx landed but failed on chain", { cause: value.err });
-          }
-          return;
-        }
-        await new Promise((r) => setTimeout(r, delay));
-        delay = Math.min(delay * 2, CONFIRM_FALLBACK_MAX_DELAY_MS);
-      }
-      throw err;
-    }
-  };
-
-  type SendOpts = { skipPreflight?: boolean; maxRetries?: number };
-  const sendSigned = async (
-    signed: Transaction,
-    bh: Blockhash,
-    commitment: ConfirmCommitment = "confirmed",
-    sendOpts: SendOpts = {},
-  ) => {
-    const sig = await connection.sendRawTransaction(signed.serialize(), {
-      skipPreflight: sendOpts.skipPreflight ?? true,
-      maxRetries: sendOpts.maxRetries ?? 3,
-    });
-    await confirmTx(sig, bh, commitment);
-    return sig;
-  };
-
-  // ── Pre-requisites (issuer registration, stale cleanup) ──
-  // These need separate signing since they must complete before the proof upload.
-  const issuerExists = await checkIssuerExists(publicKey, connection);
-  if (!issuerExists) {
-    const roots = submitCtx.roots;
+  const ensureIssuerRegistered = async (): Promise<void> => {
+    if (await checkIssuerExists(publicKey, connection)) return;
+    const { roots } = submitCtx;
     const ix = await buildRegisterIssuerIx(publicKey, {
       merkleRoot: hexToBytes(roots.membership_root),
       sanctionsRoot: hexToBytes(roots.sanctions_root),
       jurisdictionRoot: hexToBytes(roots.jurisdiction_root),
     }, connection);
-    const tx = new Transaction().add(ix);
-    tx.feePayer = publicKey;
-    const bhRegister = await connection.getLatestBlockhash("confirmed");
-    tx.recentBlockhash = bhRegister.blockhash;
-    const [signed] = await signAllTransactions([tx]);
-    await sendSigned(signed!, bhRegister, "processed");
-  }
+    await signSendConfirmSingleIx(ix, "processed");
+  };
 
-  const stalePayload = await checkHookPayloadExists(publicKey, connection);
-  if (stalePayload) {
+  const cleanupStaleHookPayload = async (): Promise<void> => {
+    if (!(await checkHookPayloadExists(publicKey, connection))) return;
     const ix = await buildCloseHookPayloadIx(publicKey, connection);
-    const tx = new Transaction().add(ix);
-    tx.feePayer = publicKey;
-    const bhClose = await connection.getLatestBlockhash("confirmed");
-    tx.recentBlockhash = bhClose.blockhash;
-    const [signed] = await signAllTransactions([tx]);
-    await sendSigned(signed!, bhClose, "processed");
-  }
+    await signSendConfirmSingleIx(ix, "processed");
+  };
 
-  // ── Build ALL proof upload transactions upfront ──
   const proofBytes = proofResult.proof;
   const nullifierBytes = hexToBytes(proofResult.publicInputs[1] ?? "");
   const mintPubkey = new SolPublicKey(transferParams.mint);
   const recipientPubkey = new SolPublicKey(transferParams.recipient);
-  const chunkSize = CHUNK_SIZE;
-  const writesPerTx = 2;
 
-  const initIx = await buildInitHookPayloadIx(publicKey, proofBytes.length, connection);
-
-  // Solana caps realloc at 10 KiB per instruction. Pre-count resize ixs so
-  // they batch into one Phantom popup with init. Upper-bound the count from
+  // Solana caps realloc at 10 KiB per instruction. Upper-bound the count from
   // proof size alone so we never under-allocate (extra resizes are idempotent
   // no-ops on-chain). Avoids hardcoding HookPayload::BASE_SPACE on the client.
-  const resizeCount = Math.ceil(proofBytes.length / 10_240);
-  const resizeIxs = [];
-  for (let i = 0; i < resizeCount; i++) {
-    resizeIxs.push(await buildResizeHookPayloadIx(publicKey, connection));
-  }
+  const buildResizeIxs = async (): Promise<TransactionInstruction[]> => {
+    const count = Math.ceil(proofBytes.length / 10_240);
+    const ixs: TransactionInstruction[] = [];
+    for (let i = 0; i < count; i++) {
+      ixs.push(await buildResizeHookPayloadIx(publicKey, connection));
+    }
+    return ixs;
+  };
 
-  const writeIxs = [];
-  for (let offset = 0; offset < proofBytes.length; offset += chunkSize) {
-    const chunk = proofBytes.slice(offset, Math.min(offset + chunkSize, proofBytes.length));
-    writeIxs.push(await buildWriteChunkIx(publicKey, offset, chunk, connection));
-  }
+  const buildWriteIxs = async (): Promise<TransactionInstruction[]> => {
+    const ixs: TransactionInstruction[] = [];
+    for (let offset = 0; offset < proofBytes.length; offset += CHUNK_SIZE) {
+      const chunk = proofBytes.slice(offset, Math.min(offset + CHUNK_SIZE, proofBytes.length));
+      ixs.push(await buildWriteChunkIx(publicKey, offset, chunk, connection));
+    }
+    return ixs;
+  };
 
+  // ── Batch 1: init + resize (own blockhash + Phantom popup) ──
+  // Pre-count resize ixs so they batch into one Phantom popup with init.
+  const sendInitResizeBatch = async (
+    initIx: TransactionInstruction,
+    resizeIxs: TransactionInstruction[],
+  ): Promise<void> => {
+    const [firstResize, ...restResize] = resizeIxs;
+    const initTx = new SolTransaction().add(initIx);
+    if (firstResize) initTx.add(firstResize);
+    const txs: Transaction[] = [initTx];
+    for (const ix of restResize) {
+      txs.push(new SolTransaction().add(ix));
+    }
+    const bh = await connection.getLatestBlockhash("confirmed");
+    for (const tx of txs) {
+      tx.feePayer = publicKey;
+      tx.recentBlockhash = bh.blockhash;
+    }
+    const signed = await signAllTransactions(txs);
+    for (const tx of signed) {
+      await sendSigned(connection, tx, bh, "processed");
+    }
+  };
+
+  // ── Batch 2: writes only (fresh blockhash + Phantom popup) ──
+  // Send writes sequentially — the on-chain handler enforces that each chunk
+  // offset matches high_water_mark, so ordering must be preserved. Confirming
+  // the last write guarantees all prior writes landed.
+  const sendWritesBatch = async (
+    writeIxs: TransactionInstruction[],
+  ): Promise<void> => {
+    const WRITES_PER_TX = 2;
+    const txs: Transaction[] = [];
+    for (let i = 0; i < writeIxs.length; i += WRITES_PER_TX) {
+      const tx = new SolTransaction();
+      for (const ix of writeIxs.slice(i, i + WRITES_PER_TX)) tx.add(ix);
+      txs.push(tx);
+    }
+    const bh = await connection.getLatestBlockhash("confirmed");
+    for (const tx of txs) {
+      tx.feePayer = publicKey;
+      tx.recentBlockhash = bh.blockhash;
+    }
+    const signed = await signAllTransactions(txs);
+    let lastSig = "";
+    for (const tx of signed) {
+      lastSig = await connection.sendRawTransaction(tx.serialize(), {
+        skipPreflight: true,
+        maxRetries: 5,
+      });
+    }
+    if (lastSig) await confirmTx(connection, lastSig, bh, "processed");
+  };
+
+  // Dynamic prio fee: p75 of recent fees on the same writable accts, floored
+  // at 200k µLam/CU (insurance) / ceilinged at 1M (cost cap). Static fees go
+  // stale during congestion spikes; dynamic outbids the live mempool.
+  // 200k floor × 400K CU ≈ 80k lamports ≈ 0.00008 SOL.
+  const getDynamicPriorityFee = async (
+    writableKeys: PublicKey[],
+  ): Promise<number> => {
+    try {
+      const recentFees = await connection.getRecentPrioritizationFees({
+        lockedWritableAccounts: writableKeys,
+      });
+      if (recentFees.length === 0) return 200_000;
+      const sorted = recentFees.map((f) => f.prioritizationFee).sort((a, b) => a - b);
+      const p75 = sorted[Math.floor(sorted.length * 0.75)] ?? 0;
+      return Math.min(1_000_000, Math.max(200_000, p75));
+    } catch {
+      // RPC error → keep 200k floor. Cheap insurance vs another expired tx.
+      return 200_000;
+    }
+  };
+
+  // ── Batch 3: finalize (own fresh blockhash + Phantom popup) ──
+  // Finalize is the final on-chain tx in this flow (settle_hook integration
+  // pending Light CPI wiring). Three layers of defense vs devnet congestion:
+  //   1. Dynamic prio fee — see getDynamicPriorityFee.
+  //   2. Explicit CU limit: leaders prefer txs with set limits over the
+  //      default 200K (a sentinel for "I don't know my cost").
+  //   3. Manual rebroadcast loop: `sendRawTransaction`'s internal maxRetries
+  //      is best-effort and often gives up before the bh window (60-90s)
+  //      closes. We drive re-sends ourselves — same signed bytes → same
+  //      signature → no double-execution risk.
+  const sendFinalizeWithRebroadcast = async (
+    finalizeIx: TransactionInstruction,
+  ): Promise<string> => {
+    const writableKeys = finalizeIx.keys
+      .filter((k) => k.isWritable)
+      .map((k) => k.pubkey);
+    const prioFee = await getDynamicPriorityFee(writableKeys);
+
+    const finalizeTx = new SolTransaction()
+      .add(ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }))
+      .add(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: prioFee }))
+      .add(finalizeIx);
+    const bh = await connection.getLatestBlockhash("confirmed");
+    finalizeTx.feePayer = publicKey;
+    finalizeTx.recentBlockhash = bh.blockhash;
+    const [signedFinalize] = await signAllTransactions([finalizeTx]);
+
+    const rawFinalize = signedFinalize!.serialize();
+    const finalSig = await connection.sendRawTransaction(rawFinalize, {
+      skipPreflight: true,
+      maxRetries: 0,
+    });
+    await rebroadcastUntilLandedOrExpired(connection, rawFinalize, finalSig, bh);
+    return finalSig;
+  };
+
+  // ── Pre-requisites (issuer registration, stale cleanup) ──
+  // These need separate signing since they must complete before the proof upload.
+  await ensureIssuerRegistered();
+  await cleanupStaleHookPayload();
+
+  // ── Build ALL proof upload transactions upfront ──
+  const initIx = await buildInitHookPayloadIx(publicKey, proofBytes.length, connection);
+  const resizeIxs = await buildResizeIxs();
+  const writeIxs = await buildWriteIxs();
   const epoch = Math.floor(Date.now() / 1000 / 86400);
   const finalizeIx = await buildFinalizeHookPayloadIx(publicKey, {
     nullifierHash: nullifierBytes,
@@ -379,172 +587,9 @@ async function runStepSubmit(
     amount: new BN(transferParams.amount),
   }, connection);
 
-  // ── Batch 1: init + resize (own blockhash + Phantom popup) ──
-  const initResizeTxs: Transaction[] = [];
-  const initTx = new Transaction().add(initIx);
-  if (resizeIxs.length > 0) initTx.add(resizeIxs[0]!);
-  initResizeTxs.push(initTx);
-  for (let i = 1; i < resizeIxs.length; i++) {
-    initResizeTxs.push(new Transaction().add(resizeIxs[i]!));
-  }
-
-  const bh1 = await connection.getLatestBlockhash("confirmed");
-  for (const tx of initResizeTxs) {
-    tx.feePayer = publicKey;
-    tx.recentBlockhash = bh1.blockhash;
-  }
-  const signedInitResize = await signAllTransactions(initResizeTxs);
-  for (const tx of signedInitResize) {
-    await sendSigned(tx, bh1, "processed");
-  }
-
-  // ── Batch 2: writes only (fresh blockhash + Phantom popup) ──
-  const writeTxs: Transaction[] = [];
-  for (let i = 0; i < writeIxs.length; i += writesPerTx) {
-    const tx = new Transaction();
-    for (const ix of writeIxs.slice(i, i + writesPerTx)) tx.add(ix);
-    writeTxs.push(tx);
-  }
-
-  const bh2 = await connection.getLatestBlockhash("confirmed");
-  for (const tx of writeTxs) {
-    tx.feePayer = publicKey;
-    tx.recentBlockhash = bh2.blockhash;
-  }
-  const signedWrites = await signAllTransactions(writeTxs);
-
-  // Send writes sequentially — the on-chain handler enforces that each
-  // chunk offset matches high_water_mark, so ordering must be preserved.
-  let lastWriteSig = "";
-  for (const tx of signedWrites) {
-    lastWriteSig = await connection.sendRawTransaction(tx!.serialize(), {
-      skipPreflight: true,
-      maxRetries: 5,
-    });
-  }
-
-  // Confirming the last write guarantees all prior writes landed (each
-  // write's offset must match the cumulative high_water_mark).
-  if (lastWriteSig) await confirmTx(lastWriteSig, bh2, "processed");
-
-  // ── Batch 3: finalize (own fresh blockhash + Phantom popup) ──
-  // Finalize is the final on-chain tx in this flow (settle_hook integration
-  // pending Light CPI wiring). Three layers of defense vs devnet congestion:
-  //   1. Dynamic prio fee: p75 of recent fees on the same writable accts,
-  //      floored at 200k µLam/CU (insurance) / ceilinged at 1M (cost cap).
-  //      Static fees go stale during congestion spikes; dynamic outbids the
-  //      live mempool. 200k floor × 400K CU ≈ 80k lamports ≈ 0.00008 SOL.
-  //   2. Explicit CU limit: leaders prefer txs with set limits over the
-  //      default 200K (a sentinel for "I don't know my cost").
-  //   3. Manual rebroadcast loop: `sendRawTransaction`'s internal maxRetries
-  //      is best-effort and often gives up before the bh window (60-90s)
-  //      closes. We drive re-sends every 2s ourselves; same signed bytes →
-  //      same signature → no double-execution risk. Stop only when status
-  //      shows landed or current block height exceeds lastValidBlockHeight.
-  const finalizeWritableKeys = finalizeIx.keys
-    .filter((k) => k.isWritable)
-    .map((k) => k.pubkey);
-
-  let prioFeeMicroLamports = 200_000;
-  try {
-    const recentFees = await connection.getRecentPrioritizationFees({
-      lockedWritableAccounts: finalizeWritableKeys,
-    });
-    if (recentFees.length > 0) {
-      const sorted = recentFees
-        .map((f) => f.prioritizationFee)
-        .sort((a, b) => a - b);
-      const p75 = sorted[Math.floor(sorted.length * 0.75)] ?? 0;
-      prioFeeMicroLamports = Math.min(1_000_000, Math.max(200_000, p75));
-    }
-  } catch {
-    // RPC error → keep 200k floor. Cheap insurance vs another expired tx.
-  }
-
-  const finalizeCuLimitIx = ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 });
-  const finalizeCuPriceIx = ComputeBudgetProgram.setComputeUnitPrice({ microLamports: prioFeeMicroLamports });
-  const finalizeTx = new Transaction()
-    .add(finalizeCuLimitIx)
-    .add(finalizeCuPriceIx)
-    .add(finalizeIx);
-  const bh3 = await connection.getLatestBlockhash("confirmed");
-  finalizeTx.feePayer = publicKey;
-  finalizeTx.recentBlockhash = bh3.blockhash;
-  const [signedFinalize] = await signAllTransactions([finalizeTx]);
-
-  const rawFinalize = signedFinalize!.serialize();
-  const finalSig = await connection.sendRawTransaction(rawFinalize, {
-    skipPreflight: true,
-    maxRetries: 0,
-  });
-
-  const REBROADCAST_INTERVAL_MS = 2_000;
-  // Edge-window grace after bh expiry: a tx can land at the very last valid
-  // block while `getBlockHeight` already reports past `lastValidBlockHeight`.
-  // Mirrors the `confirmTx` fallback's poll window so we don't surface a
-  // false-negative `TransactionExpiredBlockheightExceededError` on inclusions
-  // at the edge of the validity window.
-  const FINAL_POLL_TIMEOUT_MS = 30_000;
-  // RPC calls inside the loop (`getSignatureStatuses`, `getBlockHeight`,
-  // `sendRawTransaction`) are all wrapped so a transient devnet blip can't
-  // abort the rebroadcast loop before the bh window naturally ends. Only the
-  // "landed but failed on-chain" path propagates — that's a real failure.
-  const pollLanded = async (): Promise<boolean> => {
-    let value: Awaited<ReturnType<typeof connection.getSignatureStatuses>>["value"];
-    try {
-      ({ value } = await connection.getSignatureStatuses([finalSig], {
-        searchTransactionHistory: true,
-      }));
-    } catch {
-      return false;
-    }
-    const status = value[0];
-    if (!status) return false;
-    if (status.err) {
-      throw new Error("finalize landed but failed on chain", { cause: status.err });
-    }
-    return (
-      status.confirmationStatus === "confirmed" ||
-      status.confirmationStatus === "finalized"
-    );
-  };
-
-  let landed = false;
-  let pastExpiry = false;
-  let expiryDeadline = 0;
-  while (true) {
-    if (await pollLanded()) {
-      landed = true;
-      break;
-    }
-    if (!pastExpiry) {
-      let currentBlockHeight: number | null = null;
-      try {
-        currentBlockHeight = await connection.getBlockHeight("confirmed");
-      } catch {
-        // RPC blip → treat as not-yet-expired, loop again.
-      }
-      if (
-        currentBlockHeight !== null &&
-        currentBlockHeight > bh3.lastValidBlockHeight
-      ) {
-        pastExpiry = true;
-        expiryDeadline = Date.now() + FINAL_POLL_TIMEOUT_MS;
-      } else {
-        // Re-broadcast: same signed bytes → idempotent. Swallow errors so a
-        // transient RPC blip doesn't kill the loop before bh expiry.
-        await connection
-          .sendRawTransaction(rawFinalize, { skipPreflight: true, maxRetries: 0 })
-          .catch(() => {});
-      }
-    } else if (Date.now() > expiryDeadline) {
-      break;
-    }
-    await new Promise((r) => setTimeout(r, REBROADCAST_INTERVAL_MS));
-  }
-  if (!landed) {
-    throw new TransactionExpiredBlockheightExceededError(finalSig);
-  }
+  await sendInitResizeBatch(initIx, resizeIxs);
+  await sendWritesBatch(writeIxs);
+  const finalSig = await sendFinalizeWithRebroadcast(finalizeIx);
 
   dispatch({ type: "SET_TX", signature: finalSig });
   dispatch({
@@ -597,13 +642,18 @@ function handleCredentialError(dispatch: Dispatch<FlowAction>, err: unknown): vo
 
 function handleSubmitError(dispatch: Dispatch<FlowAction>, err: unknown): void {
   console.error("[zksettle] Submit step error:", err);
-  try { console.error("[zksettle] Error JSON:", JSON.stringify(err, Object.getOwnPropertyNames(err as object))); } catch { /* */ }
+  try { console.error("[zksettle] Error JSON:", JSON.stringify(err, Object.getOwnPropertyNames(err))); } catch { /* */ }
   const errRecord = err as Record<string, unknown>;
   const inner = errRecord?.error;
   if (inner) console.error("[zksettle] Inner error:", inner);
   const logs = (errRecord?.logs ?? (inner as Record<string, unknown>)?.logs) as string[] | undefined;
   if (logs) console.error("[zksettle] Transaction logs:", logs);
-  const message = err instanceof Error ? err.message : String(errRecord?.message ?? "Transaction failed");
+  const recordMessage = errRecord?.message;
+  const message = err instanceof Error
+    ? err.message
+    : typeof recordMessage === "string"
+      ? recordMessage
+      : "Transaction failed";
   const isRejected = message.includes("rejected") || message.includes("User rejected");
   dispatch({ type: "STEP_ERROR", step: 4, error: isRejected ? "Transaction rejected by wallet." : message });
 }
