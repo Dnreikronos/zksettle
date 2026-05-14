@@ -49,6 +49,13 @@ services:
       KEYPAIR_PATH: "/keys/id.json"
       RPC_URL: "${RPC_URL:-http://127.0.0.1:8899}"
       API_TOKEN: "${API_TOKEN:-}"
+      # Sunspot Groth16 prover wiring. Paths point at artefacts baked into
+      # the image (see backend/Dockerfile). Removing any of these four vars
+      # leaves /prove/groth16 unmounted -> 404.
+      SUNSPOT_BIN: "/usr/local/bin/sunspot"
+      SUNSPOT_ACIR_PATH: "/artefacts/zksettle_slice.json"
+      SUNSPOT_CCS_PATH: "/artefacts/zksettle_slice.ccs"
+      SUNSPOT_PK_PATH: "/artefacts/zksettle_slice.pk"
     volumes:
       - ${KEYPAIR_FILE:-~/.config/solana/id.json}:/keys/id.json:ro
 
