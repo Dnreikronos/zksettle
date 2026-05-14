@@ -479,31 +479,67 @@ async function runStepSubmit(
   });
 
   const REBROADCAST_INTERVAL_MS = 2_000;
-  let landed = false;
-  while (true) {
-    const { value } = await connection.getSignatureStatuses([finalSig], {
-      searchTransactionHistory: true,
-    });
+  // Edge-window grace after bh expiry: a tx can land at the very last valid
+  // block while `getBlockHeight` already reports past `lastValidBlockHeight`.
+  // Mirrors the `confirmTx` fallback's poll window so we don't surface a
+  // false-negative `TransactionExpiredBlockheightExceededError` on inclusions
+  // at the edge of the validity window.
+  const FINAL_POLL_TIMEOUT_MS = 30_000;
+  // RPC calls inside the loop (`getSignatureStatuses`, `getBlockHeight`,
+  // `sendRawTransaction`) are all wrapped so a transient devnet blip can't
+  // abort the rebroadcast loop before the bh window naturally ends. Only the
+  // "landed but failed on-chain" path propagates — that's a real failure.
+  const pollLanded = async (): Promise<boolean> => {
+    let value: Awaited<ReturnType<typeof connection.getSignatureStatuses>>["value"];
+    try {
+      ({ value } = await connection.getSignatureStatuses([finalSig], {
+        searchTransactionHistory: true,
+      }));
+    } catch {
+      return false;
+    }
     const status = value[0];
-    if (status) {
-      if (status.err) {
-        throw new Error("finalize landed but failed on chain", { cause: status.err });
+    if (!status) return false;
+    if (status.err) {
+      throw new Error("finalize landed but failed on chain", { cause: status.err });
+    }
+    return (
+      status.confirmationStatus === "confirmed" ||
+      status.confirmationStatus === "finalized"
+    );
+  };
+
+  let landed = false;
+  let pastExpiry = false;
+  let expiryDeadline = 0;
+  while (true) {
+    if (await pollLanded()) {
+      landed = true;
+      break;
+    }
+    if (!pastExpiry) {
+      let currentBlockHeight: number | null = null;
+      try {
+        currentBlockHeight = await connection.getBlockHeight("confirmed");
+      } catch {
+        // RPC blip → treat as not-yet-expired, loop again.
       }
       if (
-        status.confirmationStatus === "confirmed" ||
-        status.confirmationStatus === "finalized"
+        currentBlockHeight !== null &&
+        currentBlockHeight > bh3.lastValidBlockHeight
       ) {
-        landed = true;
-        break;
+        pastExpiry = true;
+        expiryDeadline = Date.now() + FINAL_POLL_TIMEOUT_MS;
+      } else {
+        // Re-broadcast: same signed bytes → idempotent. Swallow errors so a
+        // transient RPC blip doesn't kill the loop before bh expiry.
+        await connection
+          .sendRawTransaction(rawFinalize, { skipPreflight: true, maxRetries: 0 })
+          .catch(() => {});
       }
+    } else if (Date.now() > expiryDeadline) {
+      break;
     }
-    const currentBlockHeight = await connection.getBlockHeight("confirmed");
-    if (currentBlockHeight > bh3.lastValidBlockHeight) break;
-    // Re-broadcast: same signed bytes → idempotent. Swallow errors here so
-    // a transient RPC blip doesn't kill the loop before the bh window ends.
-    await connection
-      .sendRawTransaction(rawFinalize, { skipPreflight: true, maxRetries: 0 })
-      .catch(() => {});
     await new Promise((r) => setTimeout(r, REBROADCAST_INTERVAL_MS));
   }
   if (!landed) {
