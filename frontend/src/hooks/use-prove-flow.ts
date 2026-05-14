@@ -429,20 +429,86 @@ async function runStepSubmit(
 
   // ── Batch 3: finalize (own fresh blockhash + Phantom popup) ──
   // Finalize is the final on-chain tx in this flow (settle_hook integration
-  // pending Light CPI wiring). Attach a priority fee + bump maxRetries so the
-  // tx survives Alchemy devnet congestion: w/o a fee, leaders skip the tx and
-  // the blockhash window (60-90s) expires before inclusion, surfacing as
-  // `TransactionExpiredBlockheightExceededError`. 50k µLamports/CU × default
-  // 200K CU ≈ 10,000 lamports ≈ 0.00001 SOL — negligible vs rent already paid.
-  const finalizeCuPriceIx = ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50_000 });
-  const finalizeTx = new Transaction().add(finalizeCuPriceIx).add(finalizeIx);
+  // pending Light CPI wiring). Three layers of defense vs devnet congestion:
+  //   1. Dynamic prio fee: p75 of recent fees on the same writable accts,
+  //      floored at 200k µLam/CU (insurance) / ceilinged at 1M (cost cap).
+  //      Static fees go stale during congestion spikes; dynamic outbids the
+  //      live mempool. 200k floor × 400K CU ≈ 80k lamports ≈ 0.00008 SOL.
+  //   2. Explicit CU limit: leaders prefer txs with set limits over the
+  //      default 200K (a sentinel for "I don't know my cost").
+  //   3. Manual rebroadcast loop: `sendRawTransaction`'s internal maxRetries
+  //      is best-effort and often gives up before the bh window (60-90s)
+  //      closes. We drive re-sends every 2s ourselves; same signed bytes →
+  //      same signature → no double-execution risk. Stop only when status
+  //      shows landed or current block height exceeds lastValidBlockHeight.
+  const finalizeWritableKeys = finalizeIx.keys
+    .filter((k) => k.isWritable)
+    .map((k) => k.pubkey);
+
+  let prioFeeMicroLamports = 200_000;
+  try {
+    const recentFees = await connection.getRecentPrioritizationFees({
+      lockedWritableAccounts: finalizeWritableKeys,
+    });
+    if (recentFees.length > 0) {
+      const sorted = recentFees
+        .map((f) => f.prioritizationFee)
+        .sort((a, b) => a - b);
+      const p75 = sorted[Math.floor(sorted.length * 0.75)] ?? 0;
+      prioFeeMicroLamports = Math.min(1_000_000, Math.max(200_000, p75));
+    }
+  } catch {
+    // RPC error → keep 200k floor. Cheap insurance vs another expired tx.
+  }
+
+  const finalizeCuLimitIx = ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 });
+  const finalizeCuPriceIx = ComputeBudgetProgram.setComputeUnitPrice({ microLamports: prioFeeMicroLamports });
+  const finalizeTx = new Transaction()
+    .add(finalizeCuLimitIx)
+    .add(finalizeCuPriceIx)
+    .add(finalizeIx);
   const bh3 = await connection.getLatestBlockhash("confirmed");
   finalizeTx.feePayer = publicKey;
   finalizeTx.recentBlockhash = bh3.blockhash;
   const [signedFinalize] = await signAllTransactions([finalizeTx]);
-  const finalSig = await sendSigned(signedFinalize!, bh3, "confirmed", {
-    maxRetries: 10,
+
+  const rawFinalize = signedFinalize!.serialize();
+  const finalSig = await connection.sendRawTransaction(rawFinalize, {
+    skipPreflight: true,
+    maxRetries: 0,
   });
+
+  const REBROADCAST_INTERVAL_MS = 2_000;
+  let landed = false;
+  while (true) {
+    const { value } = await connection.getSignatureStatuses([finalSig], {
+      searchTransactionHistory: true,
+    });
+    const status = value[0];
+    if (status) {
+      if (status.err) {
+        throw new Error("finalize landed but failed on chain", { cause: status.err });
+      }
+      if (
+        status.confirmationStatus === "confirmed" ||
+        status.confirmationStatus === "finalized"
+      ) {
+        landed = true;
+        break;
+      }
+    }
+    const currentBlockHeight = await connection.getBlockHeight("confirmed");
+    if (currentBlockHeight > bh3.lastValidBlockHeight) break;
+    // Re-broadcast: same signed bytes → idempotent. Swallow errors here so
+    // a transient RPC blip doesn't kill the loop before the bh window ends.
+    await connection
+      .sendRawTransaction(rawFinalize, { skipPreflight: true, maxRetries: 0 })
+      .catch(() => {});
+    await new Promise((r) => setTimeout(r, REBROADCAST_INTERVAL_MS));
+  }
+  if (!landed) {
+    throw new TransactionExpiredBlockheightExceededError(finalSig);
+  }
 
   dispatch({ type: "SET_TX", signature: finalSig });
   dispatch({
