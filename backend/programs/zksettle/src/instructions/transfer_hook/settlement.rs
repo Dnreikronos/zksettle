@@ -88,7 +88,7 @@ fn run_settlement(sctx: SettlementContext<'_, '_>) -> Result<()> {
         .payload
         .epoch
         .checked_mul(EPOCH_LEN_SECS as u64)
-        .ok_or_else(|| error!(ZkSettleError::NegativeClock))?;
+        .ok_or_else(|| error!(ZkSettleError::EpochTimestampOverflow))?;
 
     crate::cu_probe!("pre-verify_bundle");
     verify_bundle(

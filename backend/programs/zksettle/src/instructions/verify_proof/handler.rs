@@ -52,7 +52,7 @@ pub fn handler<'info>(
 
     let timestamp = epoch
         .checked_mul(EPOCH_LEN_SECS as u64)
-        .ok_or_else(|| error!(ZkSettleError::NegativeClock))?;
+        .ok_or_else(|| error!(ZkSettleError::EpochTimestampOverflow))?;
 
     verify_bundle(
         &proof_and_witness,
