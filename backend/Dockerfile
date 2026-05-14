@@ -41,8 +41,14 @@ COPY --from=builder /app/target/release/api-gateway /usr/local/bin/
 COPY --from=builder /app/target/release/issuer-service /usr/local/bin/
 COPY --from=builder /app/target/release/indexer /usr/local/bin/
 COPY --from=sunspot-builder /out/sunspot /usr/local/bin/sunspot
+# Artefacts are read-only inputs to sunspot. Strip write bits via a
+# follow-up chmod (0444 = r--r--r--) so the runtime user cannot rewrite
+# them — addresses Sonar docker:S6504. Done as a RUN step instead of
+# COPY --chmod because the latter requires BuildKit; the legacy builder
+# still in use here would silently ignore the flag.
 COPY --chown=appuser:appuser artefacts/zksettle_slice.json /artefacts/zksettle_slice.json
 COPY --chown=appuser:appuser artefacts/zksettle_slice.ccs  /artefacts/zksettle_slice.ccs
 COPY --chown=appuser:appuser artefacts/zksettle_slice.pk   /artefacts/zksettle_slice.pk
+RUN chmod 0444 /artefacts/zksettle_slice.json /artefacts/zksettle_slice.ccs /artefacts/zksettle_slice.pk
 USER appuser
 CMD ["sh", "-c", "exec ${SERVICE:-api-gateway}"]
